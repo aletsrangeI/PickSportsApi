@@ -20,7 +20,7 @@ builder.Services.AddApplicationServices();
 builder.Services.AddInjection(builder.Configuration);
 builder.Services.AddAuthentication(builder.Configuration);
 builder.Services.AddSwagger();
-builder.Services.AddWatchDog(builder.Configuration);
+// builder.Services.AddWatchDog(builder.Configuration);
 
 var app = builder.Build();
 
@@ -38,18 +38,18 @@ if (app.Environment.IsDevelopment())
 {
 }
 
-app.UseWatchDogExceptionLogger();
+// app.UseWatchDogExceptionLogger();
 app.UseHttpsRedirection();
 app.UseCors("policyPickSport");
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-app.UseWatchDog(conf =>
-{
-    conf.WatchPageUsername = builder.Configuration["WatchDog:WatchPageUsername"];
-    conf.WatchPagePassword = builder.Configuration["WatchDog:WatchPagePassword"];
-});
+// app.UseWatchDog(conf =>
+// {
+//     conf.WatchPageUsername = builder.Configuration["WatchDog:WatchPageUsername"];
+//     conf.WatchPagePassword = builder.Configuration["WatchDog:WatchPagePassword"];
+// });
 app.UseDeveloperExceptionPage();
 app.Run();
 
