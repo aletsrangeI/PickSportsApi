@@ -133,6 +133,8 @@ public class AuthController : ControllerBase
     [Authorize]
     [HttpPost("avatar")]
     [Consumes("multipart/form-data")]
+    [RequestSizeLimit(25 * 1024 * 1024)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 25 * 1024 * 1024)]
     public async Task<IActionResult> UploadAvatar([FromForm] IFormFile file)
     {
         var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
