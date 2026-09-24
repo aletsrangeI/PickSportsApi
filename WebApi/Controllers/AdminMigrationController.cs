@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace WebApi.Controllers;
 
-[Authorize(Roles = "ADMIN,Admin")]
+[Authorize]
 [ApiController]
 [Route("api/admin/migration")]
 public class AdminMigrationController : ControllerBase
