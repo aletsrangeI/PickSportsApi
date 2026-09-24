@@ -25,7 +25,7 @@ public class QuinielaMigrationServiceTests : IDisposable
     private readonly ScoringEngine _scoringEngine;
     private readonly PasswordHasher _passwordHasher;
     private readonly QuinielaMigrationService _migrationService;
-    private readonly string _excelPath = @"c:\OrionSys\Quiniela\Quiniela Clausura Liga MX 2026.xlsx";
+    private readonly string _excelPath = Path.Combine(AppContext.BaseDirectory, "TestData", "Quiniela Clausura Liga MX 2026.xlsx");
 
     public QuinielaMigrationServiceTests()
     {
