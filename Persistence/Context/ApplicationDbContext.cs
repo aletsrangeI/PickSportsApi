@@ -20,20 +20,29 @@ public class ApplicationDbContext : DbContext
         _auditableEntitySaveChangesInterceptor = auditableEntitySaveChangesInterceptor;
     }
 
+    // Core Domain DbSets
+    public DbSet<Sport> Sports { get; set; }
+    public DbSet<League> Leagues { get; set; }
+    public DbSet<Team> Teams { get; set; }
+    public DbSet<Season> Seasons { get; set; }
+    public DbSet<Week> Weeks { get; set; }
+    public DbSet<Match> Matches { get; set; }
     public DbSet<User> Users { get; set; }
+    public DbSet<Quiniela> Quinielas { get; set; }
+    public DbSet<QuinielaMember> QuinielaMembers { get; set; }
+    public DbSet<Pick> Picks { get; set; }
+    public DbSet<WeeklyAward> WeeklyAwards { get; set; }
+    public DbSet<PickAuditLog> PickAuditLogs { get; set; }
+    public DbSet<PushSubscription> PushSubscriptions { get; set; }
+    public DbSet<EspnHealthLog> EspnHealthLogs { get; set; }
+
+    // Dynamic Form Catalog DbSets
     public DbSet<Catalogo> Catalogos { get; set; }
     public DbSet<ContenidoCatalogo> ContenidoCatalogos { get; set; }
-    public DbSet<EquipoLiga> EquipoLigas { get; set; }
-    
     public DbSet<FormField> FormFields { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<User>().ToTable("Users");
-        modelBuilder.Entity<Catalogo>().ToTable("Catalogos");
-        modelBuilder.Entity<ContenidoCatalogo>().ToTable("ContenidoCatalgos");
-        modelBuilder.Entity<EquipoLiga>().ToTable("EquipoLigas");
-        modelBuilder.Entity<FormField>().ToTable("FormFields");
         modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
         base.OnModelCreating(modelBuilder);
     }

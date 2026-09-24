@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
@@ -30,7 +31,12 @@ public static class AuthenticationExtensions
                 {
                     OnTokenValidated = context =>
                     {
-                        var userId = int.Parse(context.Principal.Identity.Name);
+                        var idClaim = context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                                      ?? context.Principal?.Identity?.Name;
+                        if (int.TryParse(idClaim, out var userId))
+                        {
+                            // Valid user id
+                        }
                         return Task.CompletedTask;
                     },
 

@@ -1,0 +1,173 @@
+name: CI/CD - PickSportsApi (Docker)
+
+on:
+  push:
+    branches:
+      - Development
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-picksports-api-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    name: Build Docker Image & Deploy to Homelab
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Ejecutar pruebas unitarias
+        run: |
+          dotnet restore PickSportsApi.sln
+          dotnet test PickSportsApi.sln -c Release --verbosity normal
+
+      - name: Obtener nombre de usuario en minúsculas
+        run: |
+          echo "IMAGE_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Iniciar sesión en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Construir y publicar imagen Docker en GHCR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ env.IMAGE_OWNER }}/picksports-api:latest
+            ghcr.io/${{ env.IMAGE_OWNER }}/picksports-api:${{ github.sha }}
+
+      # Conectar a Tailscale justo antes del despliegue (evita interferencias con Docker Buildx)
+      - name: Conectar a Tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          args: --accept-routes --hostname=gha-deploy-picksports-api
+
+      # Esperar a que el túnel Tailscale hacia Homelab esté caliente y listo
+      - name: Verificar conectividad Tailscale hacia Homelab
+        run: |
+          echo "Verificando ruta Tailscale hacia ${{ secrets.HOMELAB_HOST }}..."
+          for i in $(seq 1 12); do
+            if tailscale ping -c 1 ${{ secrets.HOMELAB_HOST }} >/dev/null 2>&1; then
+              echo ">> Túnel Tailscale activo y listo."
+              break
+            fi
+            echo "Esperando ruta WireGuard (intento $i/12)..."
+            sleep 2
+          done
+
+      # Configurar clave SSH sanitizando posibles saltos de línea y forzando algoritmo KEX compatible con MTU de Tailscale
+      - name: Configurar SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf "%s\n" "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          cat << 'EOF' > ~/.ssh/config
+          Host *
+            KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group14-sha256
+            IPQoS throughput
+            ServerAliveInterval 15
+            ServerAliveCountMax 3
+            StrictHostKeyChecking no
+            ConnectTimeout 30
+          EOF
+          chmod 600 ~/.ssh/config
+          ssh-keyscan -H ${{ secrets.HOMELAB_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      # Despliegue con Docker Compose en Homelab
+      - name: Desplegar en Homelab con Docker Compose
+        run: |
+          SSH_USER=$(echo "${{ secrets.SSH_USER }}" | tr -d '\r\n[:space:]')
+          HOMELAB_HOST=$(echo "${{ secrets.HOMELAB_HOST }}" | tr -d '\r\n[:space:]')
+          
+          cat << 'DEPLOY_SCRIPT_EOF' > deploy_remote.sh
+          set -e
+          cd /opt/picksports
+          if [ -f /opt/picksports/export-secrets.sh ]; then
+            bash /opt/picksports/export-secrets.sh || echo ">> ADVERTENCIA: Falló la exportación de Infisical, usando .env existente."
+          fi
+          docker compose pull api
+          
+          echo ">> === DIAGNÓSTICO PREVIO DE PUERTO 5287 ==="
+          ss -tulpn | grep 5287 || echo ">> (ss) Ningún socket estándar detectado en 5287"
+          docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Ports}}\t{{.Status}}'
+
+          echo ">> Liberando puerto 5287 y removiendo contenedores..."
+          docker compose stop api 2>/dev/null || true
+          docker rm -f picksports-api 2>/dev/null || true
+          
+          # 1. Si cualquier otro contenedor Docker tiene mapeado el puerto 5287
+          CONTAINER_5287=$(docker ps -q --filter "publish=5287")
+          if [ -n "$CONTAINER_5287" ]; then
+            echo ">> Deteniendo contenedor que ocupa 5287: $CONTAINER_5287"
+            docker stop $CONTAINER_5287 2>/dev/null || true
+            docker rm -f $CONTAINER_5287 2>/dev/null || true
+          fi
+
+          # 2. Si un docker-proxy huérfano retiene el puerto 5287
+          pkill -9 -f "docker-proxy.*5287" 2>/dev/null || sudo pkill -9 -f "docker-proxy.*5287" 2>/dev/null || true
+
+          # 3. Si un proceso host o fuser está disponible
+          if command -v fuser >/dev/null 2>&1; then
+            fuser -k -9 5287/tcp 2>/dev/null || sudo fuser -k -9 5287/tcp 2>/dev/null || true
+          fi
+
+          sleep 2
+          echo ">> Estado del puerto 5287 tras limpieza:"
+          ss -tulpn | grep 5287 || echo ">> Puerto 5287 libre."
+
+          docker compose up -d --no-deps --remove-orphans api
+          echo ">> Esperando verificación de salud de picksports-api..."
+          for i in $(seq 1 30); do
+            if docker inspect --format='{{json .State.Health.Status}}' picksports-api 2>/dev/null | grep -q 'healthy'; then
+              echo ">> picksports-api está saludable y listo."
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo ">> ERROR: Timeout esperando estado 'healthy'. Logs del contenedor:"
+              docker logs --tail 50 picksports-api || true
+              exit 1
+            fi
+            echo "Esperando estado saludable (intento $i/30)..."
+            sleep 2
+          done
+          echo ">> Contenedor picksports-api desplegado exitosamente."
+          DEPLOY_SCRIPT_EOF
+          
+          MAX_RETRIES=3
+          COUNT=0
+          until [ "$COUNT" -ge "$MAX_RETRIES" ]
+          do
+            ssh -v -o KexAlgorithms=curve25519-sha256 -o IPQoS=throughput -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/id_ed25519 "$SSH_USER@$HOMELAB_HOST" "bash -s" < deploy_remote.sh && break
+            COUNT=$((COUNT+1))
+            if [ "$COUNT" -lt "$MAX_RETRIES" ]; then
+              echo ">> Falló conexión SSH. Reintentando en 5 segundos (intento $((COUNT+1))/$MAX_RETRIES)..."
+              sleep 5
+            else
+              echo ">> Error crítico: Se agotaron los reintentos de SSH."
+              exit 1
+            fi
+          done
