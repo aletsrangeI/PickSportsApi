@@ -332,4 +332,143 @@ public class AuthApplication : IAuthApplication
 
         return response;
     }
+
+    public async Task<Response<UnclaimedQuinielaMembersDto>> GetUnclaimedMembersAsync(int? quinielaId = null)
+    {
+        var response = new Response<UnclaimedQuinielaMembersDto>();
+
+        Quiniela? quiniela = null;
+        if (quinielaId.HasValue && quinielaId.Value > 0)
+        {
+            quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId.Value);
+        }
+        else
+        {
+            var quinielas = (await _unitOfWork.Quinielas.GetAllAsync()).Where(q => q.Active && q.IsActive).ToList();
+            quiniela = quinielas.OrderByDescending(q => q.Id).FirstOrDefault();
+        }
+
+        if (quiniela == null)
+        {
+            response.isSuccess = false;
+            response.Message = "No se encontró una quiniela activa disponible.";
+            return response;
+        }
+
+        var members = await _unitOfWork.QuinielaMembers.GetMembersAsync(quiniela.Id);
+        bool needsSave = false;
+        var unclaimedList = new List<UnclaimedMemberItemDto>();
+
+        foreach (var m in members)
+        {
+            if (m.User == null) continue;
+            bool isMigrated = m.User.Email.EndsWith("@quiniela.local", StringComparison.OrdinalIgnoreCase);
+            if (!isMigrated) continue;
+
+            if (string.IsNullOrWhiteSpace(m.User.Token))
+            {
+                m.User.Token = Guid.NewGuid().ToString("N");
+                await _unitOfWork.Users.UpdateAsync(m.User);
+                needsSave = true;
+            }
+
+            unclaimedList.Add(new UnclaimedMemberItemDto
+            {
+                MemberId = m.Id,
+                UserId = m.UserId,
+                Alias = m.Alias,
+                TotalHits = m.TotalHits,
+                TotalUpsets = m.TotalUpsets,
+                CurrentStreak = m.CurrentStreak,
+                ClaimToken = m.User.Token
+            });
+        }
+
+        if (needsSave)
+        {
+            await _unitOfWork.Save();
+        }
+
+        response.isSuccess = true;
+        response.Message = "Participantes pendientes de vinculación obtenidos con éxito.";
+        response.Data = new UnclaimedQuinielaMembersDto
+        {
+            QuinielaId = quiniela.Id,
+            QuinielaName = quiniela.Name,
+            Members = unclaimedList.OrderBy(u => u.Alias).ToList()
+        };
+
+        return response;
+    }
+
+    public async Task<Response<AuthResponseDto>> LinkClaimedMemberForCurrentUserAsync(int currentUserId, string token)
+    {
+        var response = new Response<AuthResponseDto>();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            response.isSuccess = false;
+            response.Message = "Token de participante no proporcionado.";
+            return response;
+        }
+
+        var tempUser = await _unitOfWork.Users.GetByTokenAsync(token.Trim());
+        if (tempUser == null || !tempUser.Email.EndsWith("@quiniela.local", StringComparison.OrdinalIgnoreCase))
+        {
+            response.isSuccess = false;
+            response.Message = "El participante seleccionado ya fue vinculado o el enlace es inválido.";
+            return response;
+        }
+
+        var currentUser = await _unitOfWork.Users.GetAsync(currentUserId);
+        if (currentUser == null || !currentUser.Active)
+        {
+            response.isSuccess = false;
+            response.Message = "Usuario actual no encontrado o inactivo.";
+            return response;
+        }
+
+        var tempMemberships = await _unitOfWork.QuinielaMembers.GetByUserIdAsync(tempUser.Id);
+        foreach (var mem in tempMemberships)
+        {
+            var existingMembership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(mem.QuinielaId, currentUser.Id);
+            if (existingMembership == null)
+            {
+                mem.UserId = currentUser.Id;
+                await _unitOfWork.QuinielaMembers.UpdateAsync(mem);
+            }
+            else
+            {
+                if (existingMembership.TotalHits == 0 && mem.TotalHits > 0)
+                {
+                    existingMembership.TotalHits = mem.TotalHits;
+                    existingMembership.TotalUpsets = mem.TotalUpsets;
+                    existingMembership.TotalHumillaciones = mem.TotalHumillaciones;
+                    existingMembership.CurrentStreak = mem.CurrentStreak;
+                    existingMembership.BestStreak = mem.BestStreak;
+                    existingMembership.Alias = mem.Alias;
+                    await _unitOfWork.QuinielaMembers.UpdateAsync(existingMembership);
+                }
+                mem.Active = false;
+                await _unitOfWork.QuinielaMembers.UpdateAsync(mem);
+            }
+        }
+
+        tempUser.Active = false;
+        tempUser.Token = null;
+        await _unitOfWork.Users.UpdateAsync(tempUser);
+        await _unitOfWork.Save();
+
+        var jwtToken = _jwtTokenGenerator.GenerateToken(currentUser);
+        var profile = _mapper.Map<UserProfileDto>(currentUser);
+
+        response.isSuccess = true;
+        response.Message = "¡Historial de la quiniela vinculado exitosamente con tu cuenta!";
+        response.Data = new AuthResponseDto
+        {
+            Token = jwtToken,
+            User = profile
+        };
+
+        return response;
+    }
 }
