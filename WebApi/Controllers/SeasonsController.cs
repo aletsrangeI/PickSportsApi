@@ -38,29 +38,47 @@ public class SeasonsController : ControllerBase
             filtered = filtered.Where(s => s.LeagueId == leagueId.Value);
         }
 
-        var dtos = filtered
+        var seasonsList = filtered.ToList();
+        var dtos = seasonsList
             .Select(s =>
             {
                 leagues.TryGetValue(s.LeagueId, out var league);
                 var isSplitTournament = league != null && (league.Code == "mex.1" || league.Country == "México");
 
-                // Detección de torneo concluido (colchón de seguridad)
-                var isFinished = s.Year < currentYear ||
-                                 (s.EndDate.HasValue && s.EndDate.Value < now) ||
-                                 (isSplitTournament && s.Year == currentYear && isSecondHalfOfYear && s.Name.Contains("Clausura", StringComparison.OrdinalIgnoreCase));
-
-                // Detección del torneo actualmente en curso
                 bool isCurrent;
-                if (isSplitTournament)
+                bool isFinished;
+
+                if (s.IsCurrent)
                 {
-                    isCurrent = s.Year == currentYear &&
-                        (isSecondHalfOfYear
-                            ? s.Name.Contains("Apertura", StringComparison.OrdinalIgnoreCase)
-                            : s.Name.Contains("Clausura", StringComparison.OrdinalIgnoreCase));
+                    isCurrent = true;
+                    isFinished = false;
                 }
                 else
                 {
-                    isCurrent = (s.Year == currentYear && s.IsCurrent) || (!isFinished && s.IsCurrent);
+                    // Si alguna otra temporada de la liga tiene IsCurrent explícito en DB, esta no es actual
+                    bool hasExplicitCurrent = seasonsList.Any(x => x.LeagueId == s.LeagueId && x.IsCurrent);
+                    if (hasExplicitCurrent)
+                    {
+                        isCurrent = false;
+                        isFinished = s.Year < currentYear || (s.EndDate.HasValue && s.EndDate.Value < now);
+                    }
+                    else
+                    {
+                        // Fallback heurístico por calendario sólo si ninguna temporada tiene IsCurrent en DB
+                        if (isSplitTournament)
+                        {
+                            isCurrent = s.Year == currentYear &&
+                                (isSecondHalfOfYear
+                                    ? s.Name.Contains("Apertura", StringComparison.OrdinalIgnoreCase)
+                                    : s.Name.Contains("Clausura", StringComparison.OrdinalIgnoreCase));
+                            isFinished = !isCurrent && isSecondHalfOfYear && s.Name.Contains("Clausura", StringComparison.OrdinalIgnoreCase);
+                        }
+                        else
+                        {
+                            isFinished = s.Year < currentYear || (s.EndDate.HasValue && s.EndDate.Value < now);
+                            isCurrent = !isFinished;
+                        }
+                    }
                 }
 
                 return new SeasonSummaryDto
