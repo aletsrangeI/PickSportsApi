@@ -89,4 +89,38 @@ public class AuthController : ControllerBase
 
         return Ok(response);
     }
+
+    [AllowAnonymous]
+    [HttpGet("unclaimed-members")]
+    public async Task<IActionResult> GetUnclaimedMembers([FromQuery] int? quinielaId = null)
+    {
+        var response = await _authApplication.GetUnclaimedMembersAsync(quinielaId);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("link-current-user")]
+    public async Task<IActionResult> LinkCurrentUser([FromBody] LinkCurrentUserRequestDto request)
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                          ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
+        {
+            return Unauthorized(new { message = "Identificador de usuario inválido en el token." });
+        }
+
+        var response = await _authApplication.LinkClaimedMemberForCurrentUserAsync(userId, request.Token);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
 }
