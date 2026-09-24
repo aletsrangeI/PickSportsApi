@@ -116,14 +116,10 @@ public class DatabaseInitializer
                     Year = 2026,
                     SeasonType = 1,
                     Name = "Clausura 2026",
-                    IsCurrent = false,
+                    IsCurrent = true,
                     Active = true,
                     Created = DateTime.UtcNow
                 });
-            }
-            else
-            {
-                clausura.IsCurrent = false;
             }
 
             var apertura = await _context.Seasons.FirstOrDefaultAsync(s => s.LeagueId == ligaMx.Id && s.Year == 2026 && s.Name.Contains("Apertura"));
@@ -135,14 +131,10 @@ public class DatabaseInitializer
                     Year = 2026,
                     SeasonType = 2,
                     Name = "Apertura 2026",
-                    IsCurrent = true,
+                    IsCurrent = false,
                     Active = true,
                     Created = DateTime.UtcNow
                 });
-            }
-            else
-            {
-                apertura.IsCurrent = true;
             }
         }
 
