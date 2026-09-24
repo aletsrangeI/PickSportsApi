@@ -188,6 +188,13 @@ public class UserRepository : IUserRepository
         return await _dbContext.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == normalized && u.Active);
     }
 
+    public async Task<User?> GetByTokenAsync(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var cleanToken = token.Trim();
+        return await _dbContext.Users.FirstOrDefaultAsync(u => u.Token == cleanToken && u.Active);
+    }
+
     public async Task<User?> AuthenticateAsync(string emailOrUsername, string password)
     {
         var normalized = emailOrUsername.Trim().ToLower();

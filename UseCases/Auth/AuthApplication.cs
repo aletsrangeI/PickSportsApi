@@ -18,6 +18,7 @@ public class AuthApplication : IAuthApplication
     private readonly IAppMapper _mapper;
     private readonly RegisterRequestDtoValidator _registerValidator;
     private readonly LoginRequestDtoValidator _loginValidator;
+    private readonly ClaimAccountRequestDtoValidator _claimValidator;
 
     public AuthApplication(
         IUnitOfWork unitOfWork,
@@ -25,7 +26,8 @@ public class AuthApplication : IAuthApplication
         PasswordHasher passwordHasher,
         IAppMapper mapper,
         RegisterRequestDtoValidator registerValidator,
-        LoginRequestDtoValidator loginValidator)
+        LoginRequestDtoValidator loginValidator,
+        ClaimAccountRequestDtoValidator? claimValidator = null)
     {
         _unitOfWork = unitOfWork;
         _jwtTokenGenerator = jwtTokenGenerator;
@@ -33,6 +35,7 @@ public class AuthApplication : IAuthApplication
         _mapper = mapper;
         _registerValidator = registerValidator;
         _loginValidator = loginValidator;
+        _claimValidator = claimValidator ?? new ClaimAccountRequestDtoValidator();
     }
 
     public async Task<Response<AuthResponseDto>> RegisterAsync(RegisterRequestDto request)
@@ -154,6 +157,179 @@ public class AuthApplication : IAuthApplication
         response.isSuccess = true;
         response.Message = "Perfil obtenido con éxito.";
         response.Data = _mapper.Map<UserProfileDto>(user);
+        return response;
+    }
+
+    public async Task<Response<ClaimInfoDto>> GetClaimInfoAsync(string token)
+    {
+        var response = new Response<ClaimInfoDto>();
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            response.isSuccess = false;
+            response.Message = "Token de activación no proporcionado.";
+            return response;
+        }
+
+        var user = await _unitOfWork.Users.GetByTokenAsync(token.Trim());
+        if (user == null)
+        {
+            response.isSuccess = false;
+            response.Message = "El enlace de activación es inválido o ya ha sido utilizado.";
+            return response;
+        }
+
+        bool isMigratedPlaceholder = user.Email.EndsWith("@quiniela.local", StringComparison.OrdinalIgnoreCase);
+        if (!isMigratedPlaceholder)
+        {
+            response.isSuccess = false;
+            response.Message = "Esta cuenta ya fue activada previamente. Por favor inicia sesión con tu correo.";
+            response.Data = new ClaimInfoDto
+            {
+                Alias = user.DisplayName ?? user.Username,
+                EmailPlaceholder = user.Email,
+                IsAlreadyClaimed = true
+            };
+            return response;
+        }
+
+        var memberships = await _unitOfWork.QuinielaMembers.GetByUserIdAsync(user.Id);
+        var primaryMembership = memberships.FirstOrDefault();
+
+        response.isSuccess = true;
+        response.Message = "Información de activación obtenida exitosamente.";
+        response.Data = new ClaimInfoDto
+        {
+            Alias = primaryMembership?.Alias ?? user.DisplayName ?? user.Username,
+            QuinielaName = primaryMembership?.Quiniela?.Name ?? "Quiniela PickSports",
+            QuinielaId = primaryMembership?.QuinielaId ?? 0,
+            TotalHits = primaryMembership?.TotalHits ?? 0,
+            TotalUpsets = primaryMembership?.TotalUpsets ?? 0,
+            CurrentStreak = primaryMembership?.CurrentStreak ?? 0,
+            EmailPlaceholder = user.Email,
+            IsAlreadyClaimed = false
+        };
+
+        return response;
+    }
+
+    public async Task<Response<AuthResponseDto>> ClaimAccountAsync(ClaimAccountRequestDto request)
+    {
+        var response = new Response<AuthResponseDto>();
+        var validation = await _claimValidator.ValidateAsync(request);
+        if (!validation.IsValid)
+        {
+            response.isSuccess = false;
+            response.Message = "Errores de validación en la activación de cuenta.";
+            response.Errors = validation.Errors;
+            return response;
+        }
+
+        var user = await _unitOfWork.Users.GetByTokenAsync(request.Token.Trim());
+        if (user == null)
+        {
+            response.isSuccess = false;
+            response.Message = "El enlace de activación es inválido o ya expiró.";
+            return response;
+        }
+
+        bool isMigratedPlaceholder = user.Email.EndsWith("@quiniela.local", StringComparison.OrdinalIgnoreCase);
+        if (!isMigratedPlaceholder)
+        {
+            response.isSuccess = false;
+            response.Message = "Esta cuenta ya ha sido activada previamente. Inicia sesión directamente.";
+            return response;
+        }
+
+        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var existingUserWithEmail = await _unitOfWork.Users.GetByEmailAsync(normalizedEmail);
+
+        if (existingUserWithEmail != null && existingUserWithEmail.Id != user.Id)
+        {
+            // El usuario ya había creado una cuenta previamente con este email:
+            // Verificamos contraseña de esa cuenta para vincularle su historial
+            if (!_passwordHasher.Check(request.Password, existingUserWithEmail.PasswordHash))
+            {
+                response.isSuccess = false;
+                response.Message = "El correo ya está registrado con otra cuenta. Ingresa la contraseña correcta de dicha cuenta para vincular tu historial.";
+                return response;
+            }
+
+            // Transferir membresías del usuario temporal al usuario existente
+            var tempMemberships = await _unitOfWork.QuinielaMembers.GetByUserIdAsync(user.Id);
+            foreach (var mem in tempMemberships)
+            {
+                var existingMembership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(mem.QuinielaId, existingUserWithEmail.Id);
+                if (existingMembership == null)
+                {
+                    mem.UserId = existingUserWithEmail.Id;
+                    await _unitOfWork.QuinielaMembers.UpdateAsync(mem);
+                }
+            }
+
+            // Desactivar usuario temporal
+            user.Active = false;
+            user.Token = null;
+            await _unitOfWork.Users.UpdateAsync(user);
+            await _unitOfWork.Save();
+
+            var jwtToken = _jwtTokenGenerator.GenerateToken(existingUserWithEmail);
+            var userProfile = _mapper.Map<UserProfileDto>(existingUserWithEmail);
+
+            response.isSuccess = true;
+            response.Message = "¡Historial vinculado exitosamente a tu cuenta existente!";
+            response.Data = new AuthResponseDto
+            {
+                Token = jwtToken,
+                User = userProfile
+            };
+            return response;
+        }
+
+        // Caso normal: nueva cuenta
+        var desiredUsername = !string.IsNullOrWhiteSpace(request.Username) 
+            ? request.Username.Trim().ToLowerInvariant() 
+            : user.Username;
+
+        var userWithSameUsername = await _unitOfWork.Users.GetByUsernameAsync(desiredUsername);
+        if (userWithSameUsername != null && userWithSameUsername.Id != user.Id)
+        {
+            desiredUsername = normalizedEmail.Split('@')[0];
+            var stillTaken = await _unitOfWork.Users.GetByUsernameAsync(desiredUsername);
+            if (stillTaken != null && stillTaken.Id != user.Id)
+            {
+                desiredUsername = $"{desiredUsername}{new Random().Next(10, 99)}";
+            }
+        }
+
+        user.Username = desiredUsername;
+        user.Email = normalizedEmail;
+        user.Password = _passwordHasher.Hash(request.Password);
+        if (!string.IsNullOrWhiteSpace(request.DisplayName))
+        {
+            user.DisplayName = request.DisplayName.Trim();
+        }
+        user.Token = null; // Token consumido
+
+        var updated = await _unitOfWork.Users.UpdateAsync(user);
+        if (!updated)
+        {
+            response.isSuccess = false;
+            response.Message = "Error al actualizar la cuenta en la base de datos.";
+            return response;
+        }
+        await _unitOfWork.Save();
+
+        var token = _jwtTokenGenerator.GenerateToken(user);
+        var profile = _mapper.Map<UserProfileDto>(user);
+
+        response.isSuccess = true;
+        response.Message = "¡Cuenta activada exitosamente! Bienvenido a la quiniela.";
+        response.Data = new AuthResponseDto
+        {
+            Token = token,
+            User = profile
+        };
+
         return response;
     }
 }

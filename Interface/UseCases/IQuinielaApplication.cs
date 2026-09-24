@@ -12,4 +12,5 @@ public interface IQuinielaApplication
     Task<Response<QuinielaMemberDto>> JoinAsync(int userId, JoinQuinielaDto request);
     Task<Response<QuinielaMemberDto>> UpdatePaymentStatusAsync(int quinielaId, int memberId, bool paidFee, int requestingUserId);
     Task<Response<IEnumerable<LeagueDto>>> GetActiveLeaguesAsync();
+    Task<Response<IEnumerable<MigratedMemberClaimLinkDto>>> GetClaimLinksAsync(int quinielaId, int requestingUserId, string? originUrl = null);
 }

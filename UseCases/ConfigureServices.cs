@@ -47,6 +47,7 @@ public static class ConfigureServices
         // Validators
         services.AddTransient<RegisterRequestDtoValidator>();
         services.AddTransient<LoginRequestDtoValidator>();
+        services.AddTransient<ClaimAccountRequestDtoValidator>();
         services.AddTransient<CreateQuinielaDtoValidator>();
         services.AddTransient<JoinQuinielaDtoValidator>();
         services.AddTransient<SubmitPickDtoValidator>();

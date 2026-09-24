@@ -324,4 +324,74 @@ public class QuinielaApplication : IQuinielaApplication
 
         return response;
     }
+
+    public async Task<Response<IEnumerable<MigratedMemberClaimLinkDto>>> GetClaimLinksAsync(int quinielaId, int requestingUserId, string? originUrl = null)
+    {
+        var response = new Response<IEnumerable<MigratedMemberClaimLinkDto>>();
+        var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
+        if (quiniela == null || !quiniela.IsActive)
+        {
+            response.isSuccess = false;
+            response.Message = "La quiniela no existe o está inactiva.";
+            return response;
+        }
+
+        var requestingUser = await _unitOfWork.Users.GetAsync(requestingUserId);
+        bool isOwnerOrAdmin = quiniela.OwnerId == requestingUserId || (requestingUser != null && requestingUser.Role == "ADMIN");
+        if (!isOwnerOrAdmin)
+        {
+            response.isSuccess = false;
+            response.Message = "Solo el creador o administrador de la quiniela puede consultar los enlaces de activación.";
+            return response;
+        }
+
+        var members = await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId);
+        var baseOrigin = !string.IsNullOrWhiteSpace(originUrl) ? originUrl.TrimEnd('/') : "https://picksports.orionsys.net";
+
+        var resultList = new List<MigratedMemberClaimLinkDto>();
+        bool needsSave = false;
+
+        foreach (var m in members)
+        {
+            if (m.User == null) continue;
+            bool isMigrated = m.User.Email.EndsWith("@quiniela.local", StringComparison.OrdinalIgnoreCase);
+
+            string? token = m.User.Token;
+            if (isMigrated && string.IsNullOrWhiteSpace(token))
+            {
+                token = Guid.NewGuid().ToString("N");
+                m.User.Token = token;
+                await _unitOfWork.Users.UpdateAsync(m.User);
+                needsSave = true;
+            }
+
+            string? claimUrl = isMigrated ? $"{baseOrigin}/activar?token={token}" : null;
+            string? shareMessage = isMigrated 
+                ? $"¡Hola {m.Alias}! Ya puedes entrar a la quiniela *{quiniela.Name}*. Tu historial con *{m.TotalHits} aciertos* ya está registrado. Activa tu cuenta aquí para ingresar tus pronósticos de la Jornada 10: {claimUrl}"
+                : null;
+
+            resultList.Add(new MigratedMemberClaimLinkDto
+            {
+                MemberId = m.Id,
+                UserId = m.UserId,
+                Alias = m.Alias,
+                Email = m.User.Email,
+                TotalHits = m.TotalHits,
+                IsClaimed = !isMigrated,
+                ClaimToken = token,
+                ClaimUrl = claimUrl,
+                ShareMessage = shareMessage
+            });
+        }
+
+        if (needsSave)
+        {
+            await _unitOfWork.Save();
+        }
+
+        response.isSuccess = true;
+        response.Message = "Enlaces de activación obtenidos exitosamente.";
+        response.Data = resultList.OrderBy(x => x.IsClaimed).ThenBy(x => x.Alias);
+        return response;
+    }
 }
