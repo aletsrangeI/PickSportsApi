@@ -262,6 +262,7 @@ public class AuthApplication : IAuthApplication
                 if (existingMembership == null)
                 {
                     mem.UserId = existingUserWithEmail.Id;
+                    mem.User = existingUserWithEmail;
                     await _unitOfWork.QuinielaMembers.UpdateAsync(mem);
                 }
             }
@@ -434,6 +435,7 @@ public class AuthApplication : IAuthApplication
             if (existingMembership == null)
             {
                 mem.UserId = currentUser.Id;
+                mem.User = currentUser;
                 await _unitOfWork.QuinielaMembers.UpdateAsync(mem);
             }
             else
