@@ -13,21 +13,33 @@ public class LoggerAdapter<T> : IAppLogger<T>
         _logger = loggerFactory.CreateLogger<T>();
     }
 
+    private static void SafeWatchLog(string message)
+    {
+        try
+        {
+            WatchLogger.Log(message);
+        }
+        catch
+        {
+            // WatchDog not initialized or unavailable; ignore safely.
+        }
+    }
+
     public void LogInformation(string message, params object[] args)
     {
         _logger.LogInformation(message, args);
-        WatchLogger.Log(message);
+        SafeWatchLog(message);
     }
 
     public void LogWarning(string message, params object[] args)
     {
         _logger.LogWarning(message, args);
-        WatchLogger.Log(message);
+        SafeWatchLog(message);
     }
 
     public void LogError(string message, params object[] args)
     {
         _logger.LogError(message, args);
-        WatchLogger.Log(message);
+        SafeWatchLog(message);
     }
 }

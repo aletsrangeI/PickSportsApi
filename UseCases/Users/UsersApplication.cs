@@ -1,7 +1,7 @@
-using AutoMapper;
 using Common;
 using Domain.Entities;
 using DTO.User;
+using Interface.Mapping;
 using Interface.Persistence;
 using Interface.UseCases;
 using Validator;
@@ -11,11 +11,11 @@ namespace UseCases.Users;
 public class UsersApplication : IUsersApplication
 {
     private readonly IAppLogger<UsersApplication> _logger;
-    private readonly IMapper _mapper;
+    private readonly IAppMapper _mapper;
     private readonly IUnitOfWork _unitOfWork;
     private readonly UsersDTOValidator _validationRules;
 
-    public UsersApplication(IUnitOfWork unitOfWork, IMapper mapper, UsersDTOValidator validationRules,
+    public UsersApplication(IUnitOfWork unitOfWork, IAppMapper mapper, UsersDTOValidator validationRules,
         IAppLogger<UsersApplication> logger)
     {
         _unitOfWork = unitOfWork;

@@ -56,18 +56,31 @@ public class UserRepository : IUserRepository
         }
     }
 
+    private bool IsHashed(string password)
+    {
+        if (string.IsNullOrEmpty(password)) return false;
+        var parts = password.Split(':');
+        return parts.Length == 2 && parts[0].Length == 24;
+    }
+
     #region Metodos sincronos
 
     public bool Insert(User entity)
     {
-        entity.Password = Hash(entity.Password);
+        if (!IsHashed(entity.Password))
+        {
+            entity.Password = Hash(entity.Password);
+        }
         _dbContext.Users.Add(entity);
         return _dbContext.SaveChanges() > 0;
     }
 
     public bool Update(User entity)
     {
-        entity.Password = Hash(entity.Password);
+        if (!IsHashed(entity.Password))
+        {
+            entity.Password = Hash(entity.Password);
+        }
         _dbContext.Users.Update(entity);
         return _dbContext.SaveChanges() > 0;
     }
@@ -116,14 +129,20 @@ public class UserRepository : IUserRepository
 
     public async Task<bool> InsertAsync(User entity)
     {
-        entity.Password = Hash(entity.Password);
+        if (!IsHashed(entity.Password))
+        {
+            entity.Password = Hash(entity.Password);
+        }
         await _dbContext.Users.AddAsync(entity);
         return await _dbContext.SaveChangesAsync() > 0;
     }
 
     public async Task<bool> UpdateAsync(User entity)
     {
-        entity.Password = Hash(entity.Password);
+        if (!IsHashed(entity.Password))
+        {
+            entity.Password = Hash(entity.Password);
+        }
         _dbContext.Users.Update(entity);
         return await _dbContext.SaveChangesAsync() > 0;
     }
@@ -155,6 +174,30 @@ public class UserRepository : IUserRepository
     public async Task<int> CountAsync()
     {
         return await _dbContext.Users.CountAsync();
+    }
+
+    public async Task<User?> GetByEmailAsync(string email)
+    {
+        var normalized = email.Trim().ToLower();
+        return await _dbContext.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalized && u.Active);
+    }
+
+    public async Task<User?> GetByUsernameAsync(string username)
+    {
+        var normalized = username.Trim().ToLower();
+        return await _dbContext.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == normalized && u.Active);
+    }
+
+    public async Task<User?> AuthenticateAsync(string emailOrUsername, string password)
+    {
+        var normalized = emailOrUsername.Trim().ToLower();
+        var user = await _dbContext.Users.FirstOrDefaultAsync(u =>
+            (u.Email.ToLower() == normalized || u.Username.ToLower() == normalized) && u.Active);
+
+        if (user == null) return null;
+        if (!Check(password, user.Password)) return null;
+
+        return user;
     }
 
     #endregion

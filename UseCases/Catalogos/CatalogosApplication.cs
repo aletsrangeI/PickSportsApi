@@ -1,7 +1,7 @@
-using AutoMapper;
 using Common;
 using Domain.Entities;
 using DTO.Catalogo;
+using Interface.Mapping;
 using Interface.Persistence;
 using Interface.UseCases;
 using Validator;
@@ -11,11 +11,11 @@ namespace UseCases.Catalogos;
 public class CatalogosApplication : ICatalogosApplication
 {
     private readonly IAppLogger<CatalogosApplication> _logger;
-    private readonly IMapper _mapper;
+    private readonly IAppMapper _mapper;
     private readonly IUnitOfWork _unitOfWork;
     private readonly CatalogosDTOValidator _validationRules;
 
-    public CatalogosApplication(IUnitOfWork unitOfWork, IMapper mapper, CatalogosDTOValidator validationRules,
+    public CatalogosApplication(IUnitOfWork unitOfWork, IAppMapper mapper, CatalogosDTOValidator validationRules,
         IAppLogger<CatalogosApplication> logger)
     {
         _unitOfWork = unitOfWork;

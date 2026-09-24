@@ -1,24 +1,25 @@
-using System.ComponentModel.DataAnnotations;
 using Domain.Common;
 
 namespace Domain.Entities;
 
 public class User : BaseAuditableEntity
 {
-    [Required] [MaxLength(50)] public string Username { get; set; }
+    public string Username { get; set; } = null!;
+    public string Email { get; set; } = null!;
+    public string PasswordHash { get; set; } = null!;
 
-    [Required]
-    [EmailAddress]
-    [MaxLength(100)]
-    public string Email { get; set; }
+    public string Password
+    {
+        get => PasswordHash;
+        set => PasswordHash = value;
+    }
 
-    [Required] [MaxLength(100)] public string Password { get; set; }
+    public string DisplayName { get; set; } = null!;
+    public string? AvatarUrl { get; set; }
+    public string Role { get; set; } = "USER"; // ADMIN, USER
+    public string? Token { get; set; }
 
-    [Required] public int Role { get; set; }
-
-    public string Token { get; set; }
-
-    public ICollection<Quiniela> QuinielasOwned { get; set; }
-    public ICollection<UsuariosQuiniela> UsuariosQuinielas { get; set; }
-    public ICollection<Pronostico> Pronosticos { get; set; }
+    public ICollection<Quiniela> QuinielasOwned { get; set; } = new List<Quiniela>();
+    public ICollection<QuinielaMember> Memberships { get; set; } = new List<QuinielaMember>();
+    public ICollection<PushSubscription> PushSubscriptions { get; set; } = new List<PushSubscription>();
 }
