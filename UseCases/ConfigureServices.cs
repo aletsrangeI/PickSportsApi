@@ -27,6 +27,7 @@ public static class ConfigureServices
         // Security & Transversal
         services.AddSingleton<PasswordHasher>();
         services.AddScoped<IJwtTokenGenerator, JwtTokenGenerator>();
+        services.AddScoped<IAvatarStorageService, AvatarStorageService>();
 
         // Application Use Cases
         services.AddScoped<IAuthApplication, AuthApplication>();

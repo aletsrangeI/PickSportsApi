@@ -281,7 +281,8 @@ public class PickApplication : IPickApplication
             DisplayName = m.User?.DisplayName ?? m.Alias,
             Role = m.Role,
             TotalHits = m.TotalHits,
-            CurrentStreak = m.CurrentStreak
+            CurrentStreak = m.CurrentStreak,
+            AvatarUrl = m.User?.AvatarUrl
         });
 
         // 6. Obtener Picks (privacidad respetada: solo propios si está en PUBLISHED; todos si LOCKED/SCORED)

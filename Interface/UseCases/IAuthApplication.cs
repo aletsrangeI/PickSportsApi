@@ -12,4 +12,6 @@ public interface IAuthApplication
     Task<Response<AuthResponseDto>> ClaimAccountAsync(ClaimAccountRequestDto request);
     Task<Response<UnclaimedQuinielaMembersDto>> GetUnclaimedMembersAsync(int? quinielaId = null);
     Task<Response<AuthResponseDto>> LinkClaimedMemberForCurrentUserAsync(int currentUserId, string token);
+    Task<Response<UserProfileDto>> UploadAvatarAsync(int userId, Stream fileStream, string fileName, string contentType, long fileLength, CancellationToken cancellationToken = default);
+    Task<Response<UserProfileDto>> RemoveAvatarAsync(int userId, CancellationToken cancellationToken = default);
 }

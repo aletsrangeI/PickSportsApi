@@ -11,10 +11,12 @@ namespace WebApi.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthApplication _authApplication;
+    private readonly IAvatarStorageService _avatarStorageService;
 
-    public AuthController(IAuthApplication authApplication)
+    public AuthController(IAuthApplication authApplication, IAvatarStorageService avatarStorageService)
     {
         _authApplication = authApplication;
+        _avatarStorageService = avatarStorageService;
     }
 
     [AllowAnonymous]
@@ -126,5 +128,76 @@ public class AuthController : ControllerBase
         }
 
         return Ok(response);
+    }
+
+    [Authorize]
+    [HttpPost("avatar")]
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> UploadAvatar([FromForm] IFormFile file)
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                          ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
+        {
+            return Unauthorized(new { message = "Identificador de usuario inválido en el token." });
+        }
+
+        if (file == null || file.Length == 0)
+        {
+            return BadRequest(new { isSuccess = false, message = "Debe proporcionar un archivo de imagen válido." });
+        }
+
+        await using var stream = file.OpenReadStream();
+        var response = await _authApplication.UploadAvatarAsync(
+            userId,
+            stream,
+            file.FileName,
+            file.ContentType,
+            file.Length,
+            HttpContext.RequestAborted);
+
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
+
+    [Authorize]
+    [HttpDelete("avatar")]
+    public async Task<IActionResult> RemoveAvatar()
+    {
+        var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value 
+                          ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
+        {
+            return Unauthorized(new { message = "Identificador de usuario inválido en el token." });
+        }
+
+        var response = await _authApplication.RemoveAvatarAsync(userId, HttpContext.RequestAborted);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
+
+    [AllowAnonymous]
+    [HttpGet("avatar/{fileName}")]
+    [ResponseCache(Duration = 86400, Location = ResponseCacheLocation.Any)]
+    public IActionResult GetAvatar(string fileName)
+    {
+        var filePath = _avatarStorageService.GetAvatarFilePath(fileName);
+        if (filePath == null)
+        {
+            return NotFound(new { message = "Avatar no encontrado." });
+        }
+
+        var contentType = _avatarStorageService.GetContentType(fileName);
+        return PhysicalFile(filePath, contentType);
     }
 }
