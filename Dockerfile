@@ -26,6 +26,9 @@ EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 ENV DOTNET_RUNNING_IN_CONTAINER=true
 
+# Preparar directorio de almacenamiento de avatares con permisos adecuados
+RUN mkdir -p /app/uploads/avatars && chown -R $APP_UID /app/uploads
+
 # Ejecutar como usuario sin privilegios por seguridad
 USER $APP_UID
 

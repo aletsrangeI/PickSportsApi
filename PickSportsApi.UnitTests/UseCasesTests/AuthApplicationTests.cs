@@ -284,4 +284,120 @@ public class AuthApplicationTests
         Assert.Equal("carlos.nuevo@gmail.com", user.Email);
         Assert.Null(user.Token); // Token consumido
     }
+
+    [Fact]
+    public async Task UploadAvatarAsync_WithValidImage_UpdatesAvatarUrlAndReturnsUpdatedProfile()
+    {
+        // Arrange
+        var user = new User
+        {
+            Id = 10,
+            Username = "alex",
+            Email = "alex@test.com",
+            DisplayName = "Alex",
+            Active = true
+        };
+
+        _unitOfWorkMock.Setup(u => u.Users.GetAsync(10)).ReturnsAsync(user);
+        _unitOfWorkMock.Setup(u => u.Users.UpdateAsync(It.IsAny<User>())).ReturnsAsync(true);
+        _unitOfWorkMock.Setup(u => u.Save(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        var avatarStorageMock = new Mock<Interface.UseCases.IAvatarStorageService>();
+        avatarStorageMock.Setup(s => s.SaveAvatarAsync(
+            10,
+            It.IsAny<Stream>(),
+            "alex.jpg",
+            "image/jpeg",
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync("/api/auth/avatar/avatar_u10_abc.jpg");
+
+        var app = new AuthApplication(
+            _unitOfWorkMock.Object,
+            _jwtMock.Object,
+            _passwordHasher,
+            _mapper,
+            _registerValidator,
+            _loginValidator,
+            avatarStorageService: avatarStorageMock.Object);
+
+        using var stream = new MemoryStream(new byte[] { 0xFF, 0xD8, 0xFF, 0x00 });
+
+        // Act
+        var result = await app.UploadAvatarAsync(10, stream, "alex.jpg", "image/jpeg", 1024);
+
+        // Assert
+        Assert.True(result.isSuccess);
+        Assert.NotNull(result.Data);
+        Assert.Equal("/api/auth/avatar/avatar_u10_abc.jpg", result.Data.AvatarUrl);
+        Assert.Equal("/api/auth/avatar/avatar_u10_abc.jpg", user.AvatarUrl);
+        _unitOfWorkMock.Verify(u => u.Users.UpdateAsync(It.Is<User>(u => u.AvatarUrl == "/api/auth/avatar/avatar_u10_abc.jpg")), Times.Once);
+    }
+
+    [Fact]
+    public async Task UploadAvatarAsync_WhenFileExceeds5MB_ReturnsErrorWithoutSaving()
+    {
+        // Arrange
+        var avatarStorageMock = new Mock<Interface.UseCases.IAvatarStorageService>();
+        var app = new AuthApplication(
+            _unitOfWorkMock.Object,
+            _jwtMock.Object,
+            _passwordHasher,
+            _mapper,
+            _registerValidator,
+            _loginValidator,
+            avatarStorageService: avatarStorageMock.Object);
+
+        using var stream = new MemoryStream(new byte[] { 0x01 });
+        long size6MB = 6 * 1024 * 1024;
+
+        // Act
+        var result = await app.UploadAvatarAsync(10, stream, "huge.jpg", "image/jpeg", size6MB);
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Contains("5 MB", result.Message);
+        avatarStorageMock.Verify(s => s.SaveAvatarAsync(It.IsAny<int>(), It.IsAny<Stream>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task RemoveAvatarAsync_WithExistingAvatar_DeletesStorageAndClearsAvatarUrl()
+    {
+        // Arrange
+        var user = new User
+        {
+            Id = 15,
+            Username = "omar",
+            Email = "omar@test.com",
+            DisplayName = "Omar",
+            AvatarUrl = "/api/auth/avatar/avatar_u15_old.png",
+            Active = true
+        };
+
+        _unitOfWorkMock.Setup(u => u.Users.GetAsync(15)).ReturnsAsync(user);
+        _unitOfWorkMock.Setup(u => u.Users.UpdateAsync(It.IsAny<User>())).ReturnsAsync(true);
+        _unitOfWorkMock.Setup(u => u.Save(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        var avatarStorageMock = new Mock<Interface.UseCases.IAvatarStorageService>();
+        avatarStorageMock.Setup(s => s.DeleteAvatarAsync("/api/auth/avatar/avatar_u15_old.png", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var app = new AuthApplication(
+            _unitOfWorkMock.Object,
+            _jwtMock.Object,
+            _passwordHasher,
+            _mapper,
+            _registerValidator,
+            _loginValidator,
+            avatarStorageService: avatarStorageMock.Object);
+
+        // Act
+        var result = await app.RemoveAvatarAsync(15);
+
+        // Assert
+        Assert.True(result.isSuccess);
+        Assert.NotNull(result.Data);
+        Assert.Null(result.Data.AvatarUrl);
+        Assert.Null(user.AvatarUrl);
+        avatarStorageMock.Verify(s => s.DeleteAvatarAsync("/api/auth/avatar/avatar_u15_old.png", It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

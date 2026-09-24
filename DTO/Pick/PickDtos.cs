@@ -34,6 +34,7 @@ public class QuinielaMemberPickDto
     public string Role { get; set; } = null!;
     public int TotalHits { get; set; }
     public int CurrentStreak { get; set; }
+    public string? AvatarUrl { get; set; }
 }
 
 public class QuinielaPicksResponseDto

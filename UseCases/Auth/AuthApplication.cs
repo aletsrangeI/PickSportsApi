@@ -19,6 +19,7 @@ public class AuthApplication : IAuthApplication
     private readonly RegisterRequestDtoValidator _registerValidator;
     private readonly LoginRequestDtoValidator _loginValidator;
     private readonly ClaimAccountRequestDtoValidator _claimValidator;
+    private readonly IAvatarStorageService? _avatarStorageService;
 
     public AuthApplication(
         IUnitOfWork unitOfWork,
@@ -27,7 +28,8 @@ public class AuthApplication : IAuthApplication
         IAppMapper mapper,
         RegisterRequestDtoValidator registerValidator,
         LoginRequestDtoValidator loginValidator,
-        ClaimAccountRequestDtoValidator? claimValidator = null)
+        ClaimAccountRequestDtoValidator? claimValidator = null,
+        IAvatarStorageService? avatarStorageService = null)
     {
         _unitOfWork = unitOfWork;
         _jwtTokenGenerator = jwtTokenGenerator;
@@ -36,6 +38,7 @@ public class AuthApplication : IAuthApplication
         _registerValidator = registerValidator;
         _loginValidator = loginValidator;
         _claimValidator = claimValidator ?? new ClaimAccountRequestDtoValidator();
+        _avatarStorageService = avatarStorageService;
     }
 
     public async Task<Response<AuthResponseDto>> RegisterAsync(RegisterRequestDto request)
@@ -490,6 +493,116 @@ public class AuthApplication : IAuthApplication
             User = profile
         };
 
+        return response;
+    }
+
+    public async Task<Response<UserProfileDto>> UploadAvatarAsync(
+        int userId,
+        Stream fileStream,
+        string fileName,
+        string contentType,
+        long fileLength,
+        CancellationToken cancellationToken = default)
+    {
+        var response = new Response<UserProfileDto>();
+
+        if (fileStream == null || fileLength <= 0)
+        {
+            response.isSuccess = false;
+            response.Message = "Debe proporcionar una imagen válida.";
+            return response;
+        }
+
+        // Límite de 5 MB (5,242,880 bytes)
+        const long maxSizeBytes = 5 * 1024 * 1024;
+        if (fileLength > maxSizeBytes)
+        {
+            response.isSuccess = false;
+            response.Message = "El tamaño de la imagen no puede exceder los 5 MB.";
+            return response;
+        }
+
+        var user = await _unitOfWork.Users.GetAsync(userId);
+        if (user == null || !user.Active)
+        {
+            response.isSuccess = false;
+            response.Message = "Usuario no encontrado.";
+            return response;
+        }
+
+        if (_avatarStorageService == null)
+        {
+            response.isSuccess = false;
+            response.Message = "El servicio de almacenamiento de imágenes no está disponible.";
+            return response;
+        }
+
+        try
+        {
+            // Eliminar avatar anterior en disco si existe
+            if (!string.IsNullOrWhiteSpace(user.AvatarUrl))
+            {
+                await _avatarStorageService.DeleteAvatarAsync(user.AvatarUrl, cancellationToken);
+            }
+
+            // Guardar nuevo avatar con validación de magic bytes y sanitización de ruta
+            var avatarUrl = await _avatarStorageService.SaveAvatarAsync(
+                userId,
+                fileStream,
+                fileName,
+                contentType,
+                cancellationToken);
+
+            user.AvatarUrl = avatarUrl;
+            user.LastModified = DateTime.UtcNow;
+
+            await _unitOfWork.Users.UpdateAsync(user);
+            await _unitOfWork.Save();
+
+            response.isSuccess = true;
+            response.Message = "Foto de perfil actualizada exitosamente.";
+            response.Data = _mapper.Map<UserProfileDto>(user);
+            return response;
+        }
+        catch (ArgumentException ex)
+        {
+            response.isSuccess = false;
+            response.Message = ex.Message;
+            return response;
+        }
+        catch (Exception ex)
+        {
+            response.isSuccess = false;
+            response.Message = $"Error al procesar la foto de perfil: {ex.Message}";
+            return response;
+        }
+    }
+
+    public async Task<Response<UserProfileDto>> RemoveAvatarAsync(int userId, CancellationToken cancellationToken = default)
+    {
+        var response = new Response<UserProfileDto>();
+        var user = await _unitOfWork.Users.GetAsync(userId);
+        if (user == null || !user.Active)
+        {
+            response.isSuccess = false;
+            response.Message = "Usuario no encontrado.";
+            return response;
+        }
+
+        if (!string.IsNullOrWhiteSpace(user.AvatarUrl) && _avatarStorageService != null)
+        {
+            await _avatarStorageService.DeleteAvatarAsync(user.AvatarUrl, cancellationToken);
+        }
+
+        user.AvatarUrl = null;
+        user.LastModified = DateTime.UtcNow;
+
+        await _unitOfWork.Users.UpdateAsync(user);
+        await _unitOfWork.Save();
+
+        response.isSuccess = true;
+        response.Message = "Foto de perfil eliminada correctamente.";
+        response.Data = _mapper.Map<UserProfileDto>(user);
         return response;
     }
 }
