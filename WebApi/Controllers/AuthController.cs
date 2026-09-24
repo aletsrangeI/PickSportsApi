@@ -37,6 +37,10 @@ public class AuthController : ControllerBase
         var response = await _authApplication.LoginAsync(request);
         if (!response.isSuccess)
         {
+            if (response.Errors != null && response.Errors.Any(e => e.PropertyName == "UNCLAIMED_ACCOUNT"))
+            {
+                return BadRequest(response);
+            }
             return Unauthorized(response);
         }
 
