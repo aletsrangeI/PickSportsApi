@@ -26,4 +26,13 @@ public class QuinielaMemberRepository : GenericRepository<QuinielaMember>, IQuin
             .ThenBy(m => m.TotalHumillaciones)
             .ToListAsync();
     }
+
+    public async Task<IEnumerable<QuinielaMember>> GetByUserIdAsync(int userId)
+    {
+        return await _dbSet
+            .Include(m => m.Quiniela)
+            .Include(m => m.User)
+            .Where(m => m.UserId == userId && m.Active)
+            .ToListAsync();
+    }
 }

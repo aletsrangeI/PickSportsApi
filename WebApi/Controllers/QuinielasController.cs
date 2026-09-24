@@ -105,4 +105,21 @@ public class QuinielasController : ControllerBase
 
         return Ok(response);
     }
+
+    [HttpGet("{id}/claim-links")]
+    public async Task<IActionResult> GetClaimLinks(int id)
+    {
+        var userId = GetCurrentUserId();
+        if (userId <= 0) return Unauthorized();
+
+        var originUrl = Request.Headers["Origin"].FirstOrDefault() 
+                        ?? $"{Request.Scheme}://{Request.Host}";
+        var response = await _quinielaApplication.GetClaimLinksAsync(id, userId, originUrl);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
 }

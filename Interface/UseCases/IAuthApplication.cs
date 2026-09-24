@@ -8,4 +8,6 @@ public interface IAuthApplication
     Task<Response<AuthResponseDto>> RegisterAsync(RegisterRequestDto request);
     Task<Response<AuthResponseDto>> LoginAsync(LoginRequestDto request);
     Task<Response<UserProfileDto>> GetCurrentUserAsync(int userId);
+    Task<Response<ClaimInfoDto>> GetClaimInfoAsync(string token);
+    Task<Response<AuthResponseDto>> ClaimAccountAsync(ClaimAccountRequestDto request);
 }

@@ -63,4 +63,30 @@ public class AuthController : ControllerBase
 
         return Ok(response);
     }
+
+    [AllowAnonymous]
+    [HttpGet("claim-info")]
+    public async Task<IActionResult> GetClaimInfo([FromQuery] string token)
+    {
+        var response = await _authApplication.GetClaimInfoAsync(token);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
+
+    [AllowAnonymous]
+    [HttpPost("claim")]
+    public async Task<IActionResult> ClaimAccount([FromBody] ClaimAccountRequestDto request)
+    {
+        var response = await _authApplication.ClaimAccountAsync(request);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
 }

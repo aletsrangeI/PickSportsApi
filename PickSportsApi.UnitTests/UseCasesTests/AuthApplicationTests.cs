@@ -188,4 +188,100 @@ public class AuthApplicationTests
         Assert.False(result.isSuccess);
         Assert.Contains("Credenciales incorrectas", result.Message);
     }
+
+    [Fact]
+    public async Task GetClaimInfoAsync_WithValidToken_ReturnsClaimInfo()
+    {
+        // Arrange
+        var token = "token-carlos-123";
+        var user = new User
+        {
+            Id = 10,
+            Username = "carlos",
+            Email = "carlos@quiniela.local",
+            DisplayName = "Carlos",
+            Token = token,
+            Active = true
+        };
+        var quiniela = new Quiniela { Id = 4, Name = "Liga MX Apertura 2026" };
+        var member = new QuinielaMember
+        {
+            Id = 100,
+            QuinielaId = 4,
+            UserId = 10,
+            Alias = "Carlos",
+            TotalHits = 48,
+            Quiniela = quiniela,
+            Active = true
+        };
+
+        _unitOfWorkMock.Setup(u => u.Users.GetByTokenAsync(token)).ReturnsAsync(user);
+        _unitOfWorkMock.Setup(u => u.QuinielaMembers.GetByUserIdAsync(10)).ReturnsAsync(new List<QuinielaMember> { member });
+
+        var app = new AuthApplication(
+            _unitOfWorkMock.Object,
+            _jwtMock.Object,
+            _passwordHasher,
+            _mapper,
+            _registerValidator,
+            _loginValidator);
+
+        // Act
+        var result = await app.GetClaimInfoAsync(token);
+
+        // Assert
+        Assert.True(result.isSuccess);
+        Assert.NotNull(result.Data);
+        Assert.Equal("Carlos", result.Data.Alias);
+        Assert.Equal("Liga MX Apertura 2026", result.Data.QuinielaName);
+        Assert.Equal(48, result.Data.TotalHits);
+        Assert.False(result.Data.IsAlreadyClaimed);
+    }
+
+    [Fact]
+    public async Task ClaimAccountAsync_WithValidNewAccount_UpdatesUserAndReturnsToken()
+    {
+        // Arrange
+        var token = "token-carlos-123";
+        var user = new User
+        {
+            Id = 10,
+            Username = "carlos",
+            Email = "carlos@quiniela.local",
+            DisplayName = "Carlos",
+            Token = token,
+            Active = true
+        };
+
+        _unitOfWorkMock.Setup(u => u.Users.GetByTokenAsync(token)).ReturnsAsync(user);
+        _unitOfWorkMock.Setup(u => u.Users.GetByEmailAsync("carlos.nuevo@gmail.com")).ReturnsAsync((User?)null);
+        _unitOfWorkMock.Setup(u => u.Users.GetByUsernameAsync("carlos")).ReturnsAsync(user);
+        _unitOfWorkMock.Setup(u => u.Users.UpdateAsync(It.IsAny<User>())).ReturnsAsync(true);
+        _unitOfWorkMock.Setup(u => u.Save(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        _jwtMock.Setup(j => j.GenerateToken(It.IsAny<User>())).Returns("claimed-jwt-token");
+
+        var app = new AuthApplication(
+            _unitOfWorkMock.Object,
+            _jwtMock.Object,
+            _passwordHasher,
+            _mapper,
+            _registerValidator,
+            _loginValidator);
+
+        // Act
+        var result = await app.ClaimAccountAsync(new ClaimAccountRequestDto
+        {
+            Token = token,
+            Email = "carlos.nuevo@gmail.com",
+            Password = "Password123!",
+            DisplayName = "Carlos G"
+        });
+
+        // Assert
+        Assert.True(result.isSuccess);
+        Assert.NotNull(result.Data);
+        Assert.Equal("claimed-jwt-token", result.Data.Token);
+        Assert.Equal("carlos.nuevo@gmail.com", user.Email);
+        Assert.Null(user.Token); // Token consumido
+    }
 }
