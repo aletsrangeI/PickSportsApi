@@ -121,6 +121,25 @@ public class AuthApplication : IAuthApplication
         var user = await _unitOfWork.Users.GetByEmailAsync(identifier) 
                    ?? await _unitOfWork.Users.GetByUsernameAsync(identifier);
 
+        if (user != null && user.Email.EndsWith("@quiniela.local", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(user.Token))
+            {
+                user.Token = Guid.NewGuid().ToString("N");
+                await _unitOfWork.Users.UpdateAsync(user);
+                await _unitOfWork.Save();
+            }
+
+            response.isSuccess = false;
+            response.Message = $"¡Hola {user.DisplayName ?? user.Username}! Tu cuenta ya está lista con tus aciertos acumulados, pero aún necesitas activarla para definir tu contraseña personal.";
+            response.Errors = new List<FluentValidation.Results.ValidationFailure>
+            {
+                new("UNCLAIMED_ACCOUNT", user.Token ?? ""),
+                new("Alias", user.DisplayName ?? user.Username)
+            };
+            return response;
+        }
+
         if (user == null || !_passwordHasher.Check(request.Password, user.PasswordHash))
         {
             response.isSuccess = false;
