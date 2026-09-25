@@ -102,6 +102,11 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
                 {
                     totalNotificationsSent += await ProcessMatchdayMorningRoundupAsync(quiniela, weeks, tz, todayDateStr, nowUtc, ct);
                 }
+
+                // -----------------------------------------------------------------------------------
+                // REGLA 4: 1 HORA ANTES DEL SILBATAZO INICIAL - Última llamada para rezagados
+                // -----------------------------------------------------------------------------------
+                totalNotificationsSent += await ProcessLastHourPicksReminderAsync(quiniela, weeks, todayDateStr, nowUtc, ct);
             }
         }
 
@@ -356,6 +361,103 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
                 week.WeekNumber, quiniela.Name, delivered);
 
             sentCount++;
+        }
+
+        return sentCount;
+    }
+
+    private async Task<int> ProcessLastHourPicksReminderAsync(
+        Quiniela quiniela,
+        List<Week> weeks,
+        string todayDateStr,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
+        var sentCount = 0;
+        // Solo aplica a semanas PUBLISHED
+        var publishedWeeks = weeks.Where(w => w.Status == "PUBLISHED").OrderBy(w => w.WeekNumber).ToList();
+
+        foreach (var week in publishedWeeks)
+        {
+            var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(week.Id)).OrderBy(m => m.DateUtc).ToList();
+            if (matches.Count == 0) continue;
+
+            var firstMatch = matches.First();
+            var firstGameUtc = week.FirstGameUtc ?? firstMatch.DateUtc;
+
+            var timeUntilKickoff = firstGameUtc - nowUtc;
+            // Ventana: Faltan entre 0 y 65 minutos para el inicio del primer juego
+            if (timeUntilKickoff <= TimeSpan.Zero || timeUntilKickoff > TimeSpan.FromMinutes(65))
+            {
+                continue;
+            }
+
+            var members = (await _unitOfWork.QuinielaMembers.GetMembersAsync(quiniela.Id)).Where(m => m.Active).ToList();
+            var allPicks = (await _unitOfWork.Picks.GetAllPicksForWeekAsync(quiniela.Id, week.Id)).ToList();
+            var picksByMember = allPicks.GroupBy(p => p.MemberId).ToDictionary(g => g.Key, g => g.Count());
+
+            var home = !string.IsNullOrWhiteSpace(firstMatch.HomeTeam?.Name) ? firstMatch.HomeTeam.Name : (firstMatch.HomeTeam?.Abbreviation ?? "Local");
+            var away = !string.IsNullOrWhiteSpace(firstMatch.AwayTeam?.Name) ? firstMatch.AwayTeam.Name : (firstMatch.AwayTeam?.Abbreviation ?? "Visita");
+
+            foreach (var member in members)
+            {
+                var userPicks = picksByMember.GetValueOrDefault(member.Id, 0);
+                if (userPicks >= matches.Count)
+                {
+                    // Picks completos, no molestar
+                    continue;
+                }
+
+                var alreadySent = await _unitOfWork.PushNotificationLogs.HasNotificationBeenSentTodayAsync(
+                    "LAST_HOUR_PICKS_REMINDER",
+                    week.Id,
+                    quiniela.Id,
+                    member.UserId,
+                    todayDateStr,
+                    ct);
+
+                if (alreadySent) continue;
+
+                var missingCount = matches.Count - userPicks;
+                var missingDesc = userPicks == 0 ? "todos tus pronósticos" : $"{missingCount} pronóstico(s)";
+
+                var payload = new PushNotificationPayload(
+                    Title: "🚨 ¡1 hora para el silbatazo!",
+                    Message: $"Arranca {home} vs {away}. Tienes {missingDesc} sin responder en {quiniela.Name}. ¡Asegúralos antes de que se autollenen al azar!",
+                    Url: $"/fixtures?weekId={week.Id}",
+                    Data: new
+                    {
+                        type = "last_hour_picks_reminder",
+                        weekId = week.Id,
+                        weekNumber = week.WeekNumber,
+                        quinielaId = quiniela.Id,
+                        userPicks,
+                        totalMatches = matches.Count,
+                        missingCount
+                    }
+                );
+
+                var delivered = await _webPushService.SendNotificationToUserAsync(member.UserId, payload, ct);
+
+                await _unitOfWork.PushNotificationLogs.InsertAsync(new PushNotificationLog
+                {
+                    NotificationType = "LAST_HOUR_PICKS_REMINDER",
+                    WeekId = week.Id,
+                    QuinielaId = quiniela.Id,
+                    UserId = member.UserId,
+                    DateLocal = todayDateStr,
+                    Title = payload.Title,
+                    Message = payload.Message,
+                    DeliveredCount = delivered,
+                    SentAtUtc = nowUtc,
+                    Active = true
+                });
+
+                _logger.LogInformation("[QuinielaReminder] Alerta de última hora enviada a Usuario ID={0} ({1}/{2} picks) en Quiniela '{3}' ({4} entregados).",
+                    member.UserId, userPicks, matches.Count, quiniela.Name, delivered);
+
+                sentCount++;
+            }
         }
 
         return sentCount;
