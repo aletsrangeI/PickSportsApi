@@ -34,6 +34,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<WeeklyAward> WeeklyAwards { get; set; }
     public DbSet<PickAuditLog> PickAuditLogs { get; set; }
     public DbSet<PushSubscription> PushSubscriptions { get; set; }
+    public DbSet<PushNotificationLog> PushNotificationLogs { get; set; }
     public DbSet<EspnHealthLog> EspnHealthLogs { get; set; }
 
     // Dynamic Form Catalog DbSets

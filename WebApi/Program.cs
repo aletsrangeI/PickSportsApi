@@ -23,6 +23,7 @@ builder.Services.AddApplicationServices();
 builder.Services.AddInjection(builder.Configuration);
 builder.Services.AddAuthentication(builder.Configuration);
 builder.Services.AddHostedService<WebApi.BackgroundServices.EspnLiveScoreBackgroundWorker>();
+builder.Services.AddHostedService<WebApi.BackgroundServices.QuinielaReminderBackgroundWorker>();
 builder.Services.AddOpenApi(options =>
 {
     options.AddOperationTransformer((operation, context, cancellationToken) =>

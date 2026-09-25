@@ -15,6 +15,7 @@ public interface IUnitOfWork : IDisposable
     IWeeklyAwardRepository WeeklyAwards { get; }
     IPickAuditLogRepository PickAuditLogs { get; }
     IPushSubscriptionRepository PushSubscriptions { get; }
+    IPushNotificationLogRepository PushNotificationLogs { get; }
     IEspnHealthLogRepository EspnHealthLogs { get; }
 
     // Dynamic Form Repositories

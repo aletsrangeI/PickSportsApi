@@ -78,10 +78,10 @@ public class WebPushNotificationService : IWebPushNotificationService
     public async Task<bool> SendTestNotificationAsync(int userId, CancellationToken ct = default)
     {
         var payload = new PushNotificationPayload(
-            Title: "PickSports Test 🚀",
-            Message: "¡Tus notificaciones Web Push están activadas y funcionando con éxito!",
+            Title: "⚽ ¡Notificaciones activadas!",
+            Message: "Todo listo en PickSports. Recibirás avisos de inicio de jornada, marcadores en vivo al terminar tus partidos y la tabla de posiciones.",
             Url: "/",
-            Data: new { type = "test", sentAt = DateTime.UtcNow }
+            Data: new { type = "activation", sentAt = DateTime.UtcNow }
         );
 
         var sentCount = await SendNotificationToUserAsync(userId, payload, ct);

@@ -42,6 +42,7 @@ public static class ConfigureServices
         services.AddScoped<IWhatsAppReportService, UseCases.Reports.WhatsAppReportService>();
         services.AddScoped<IWebPushNotificationService, UseCases.Notifications.WebPushNotificationService>();
         services.AddScoped<INotificationsApplication, UseCases.Notifications.NotificationsApplication>();
+        services.AddScoped<IQuinielaReminderApplication, UseCases.Notifications.QuinielaReminderApplication>();
         services.AddScoped<IXlsxParserService, UseCases.Migration.ClosedXmlParserService>();
         services.AddScoped<IQuinielaMigrationService, UseCases.Migration.QuinielaMigrationService>();
 
