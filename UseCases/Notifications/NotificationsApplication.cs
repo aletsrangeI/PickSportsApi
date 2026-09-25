@@ -124,6 +124,17 @@ public class NotificationsApplication : INotificationsApplication
         return Task.FromResult(response);
     }
 
+    public async Task<bool> CanManageRemindersAsync(int userId)
+    {
+        var user = await _unitOfWork.Users.GetAsync(userId);
+        var userMemberships = (await _unitOfWork.QuinielaMembers.GetByUserIdAsync(userId)).ToList();
+
+        bool isGlobalAdmin = string.Equals(user?.Role, "ADMIN", StringComparison.OrdinalIgnoreCase);
+        return isGlobalAdmin || userMemberships.Any(m =>
+            string.Equals(m.Role, "OWNER", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(m.Role, "ADMIN", StringComparison.OrdinalIgnoreCase));
+    }
+
     public async Task<Response<bool>> SendTestNotificationAsync(int userId, int? quinielaId = null)
     {
         var response = new Response<bool>();
