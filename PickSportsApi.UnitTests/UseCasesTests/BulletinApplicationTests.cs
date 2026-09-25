@@ -242,7 +242,7 @@ public class BulletinApplicationTests
     }
 
     [Fact]
-    public async Task GetBulletinAsync_JornadaNoCalificada_NoAutoPublicaYEsPreliminar()
+    public async Task GetBulletinAsync_JornadaNoCalificada_RetornaFallo()
     {
         // Arrange
         var weeks = BuildWeeks();
@@ -260,11 +260,36 @@ public class BulletinApplicationTests
         var result = await _sut.GetBulletinAsync(QuinielaId, ActiveWeekId);
 
         // Assert
-        result.isSuccess.Should().BeTrue();
-        result.Data!.IsOfficial.Should().BeFalse();
-        result.Data.PublishedAtUtc.Should().BeNull();
-        result.Data.NextWeekInfo.Should().BeNull();
+        result.isSuccess.Should().BeFalse();
+        result.Message.Should().Be("El boletín solo está disponible para jornadas concluidas y calificadas.");
+        result.Data.Should().BeNull();
         _mockUow.Verify(u => u.WeeklyBulletins.InsertAsync(It.IsAny<WeeklyBulletin>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("LOCKED")]
+    [InlineData("PUBLISHED")]
+    public async Task GetBulletinAsync_JornadaNoCalificadaPorEstado_RetornaFallo(string status)
+    {
+        // Arrange
+        var week = new Week
+        {
+            Id = ActiveWeekId,
+            SeasonId = SeasonId,
+            WeekNumber = 8,
+            Name = "Jornada 8",
+            Status = status
+        };
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(BuildQuiniela());
+        _mockUow.Setup(u => u.Weeks.GetAsync(ActiveWeekId)).ReturnsAsync(week);
+
+        // Act
+        var result = await _sut.GetBulletinAsync(QuinielaId, ActiveWeekId);
+
+        // Assert
+        result.isSuccess.Should().BeFalse();
+        result.Message.Should().Be("El boletín solo está disponible para jornadas concluidas y calificadas.");
+        result.Data.Should().BeNull();
     }
 
     [Fact]
@@ -365,10 +390,9 @@ public class BulletinApplicationTests
             new UpdateAnnouncementDto { Announcement = "La jornada 8 cierra el jueves" });
 
         // Assert
-        result.isSuccess.Should().BeTrue();
-        result.Data!.AdminAnnouncement.Should().Be("La jornada 8 cierra el jueves");
-        _mockUow.Verify(u => u.WeeklyBulletins.InsertAsync(It.Is<WeeklyBulletin>(b =>
-            b.QuinielaId == QuinielaId && b.WeekId == ActiveWeekId && b.IsPublished && b.Active)), Times.Once);
+        result.isSuccess.Should().BeFalse();
+        result.Message.Should().Be("El boletín solo está disponible para jornadas concluidas y calificadas.");
+        _mockUow.Verify(u => u.WeeklyBulletins.InsertAsync(It.IsAny<WeeklyBulletin>()), Times.Never);
     }
 
     [Fact]

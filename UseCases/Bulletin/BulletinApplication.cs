@@ -48,7 +48,14 @@ public class BulletinApplication : IBulletinApplication
             response.isSuccess = false;
             response.Message = weekId.HasValue
                 ? "Jornada no encontrada."
-                : "Aún no hay jornadas publicadas para esta quiniela.";
+                : "Aún no hay ediciones oficiales publicadas para esta quiniela.";
+            return response;
+        }
+
+        if (!string.Equals(week.Status, "SCORED", StringComparison.OrdinalIgnoreCase))
+        {
+            response.isSuccess = false;
+            response.Message = "El boletín solo está disponible para jornadas concluidas y calificadas.";
             return response;
         }
 
@@ -61,10 +68,8 @@ public class BulletinApplication : IBulletinApplication
         var awards = BuildAwards(quinielaId, week.Id, standings, matches, weekPicks);
 
         var bulletin = await _unitOfWork.WeeklyBulletins.GetByQuinielaAndWeekAsync(quinielaId, week.Id);
-        bool isOfficial = string.Equals(week.Status, "SCORED", StringComparison.OrdinalIgnoreCase);
-
         // Auto-publicación: en cuanto la jornada está calificada se emite la edición oficial
-        if (bulletin == null && isOfficial)
+        if (bulletin == null)
         {
             bulletin = new WeeklyBulletin
             {
@@ -81,9 +86,7 @@ public class BulletinApplication : IBulletinApplication
         var nextWeekInfo = await BuildNextWeekInfoAsync(week);
 
         response.isSuccess = true;
-        response.Message = isOfficial
-            ? $"Edición oficial de la Jornada {week.WeekNumber}."
-            : $"Edición preliminar de la Jornada {week.WeekNumber} (la jornada no ha sido calificada).";
+        response.Message = $"Edición oficial de la Jornada {week.WeekNumber}.";
         response.Data = new WeeklyBulletinDto
         {
             QuinielaId = quinielaId,
@@ -91,7 +94,7 @@ public class BulletinApplication : IBulletinApplication
             WeekNumber = week.WeekNumber,
             WeekName = week.Name,
             WeekStatus = week.Status,
-            IsOfficial = isOfficial,
+            IsOfficial = true,
             WeekEndDate = week.EndDate,
             PublishedAtUtc = bulletin?.IsPublished == true ? bulletin.PublishedAtUtc : null,
             AdminAnnouncement = bulletin?.AdminAnnouncement,
@@ -128,6 +131,13 @@ public class BulletinApplication : IBulletinApplication
         {
             response.isSuccess = false;
             response.Message = "Jornada no encontrada.";
+            return response;
+        }
+
+        if (!string.Equals(week.Status, "SCORED", StringComparison.OrdinalIgnoreCase))
+        {
+            response.isSuccess = false;
+            response.Message = "El boletín solo está disponible para jornadas concluidas y calificadas.";
             return response;
         }
 
@@ -187,13 +197,9 @@ public class BulletinApplication : IBulletinApplication
         if (weeks.Count == 0) return null;
 
         return weeks
-                   .Where(w => string.Equals(w.Status, "SCORED", StringComparison.OrdinalIgnoreCase))
-                   .OrderByDescending(w => w.WeekNumber)
-                   .FirstOrDefault()
-               ?? weeks.FirstOrDefault(w =>
-                   string.Equals(w.Status, "PUBLISHED", StringComparison.OrdinalIgnoreCase) ||
-                   string.Equals(w.Status, "LOCKED", StringComparison.OrdinalIgnoreCase))
-               ?? weeks.OrderByDescending(w => w.WeekNumber).FirstOrDefault();
+            .Where(w => string.Equals(w.Status, "SCORED", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(w => w.WeekNumber)
+            .FirstOrDefault();
     }
 
     private static List<PodiumMemberDto> BuildPodium(List<MemberStandingDto> standings)
