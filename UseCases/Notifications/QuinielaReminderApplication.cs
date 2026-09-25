@@ -285,35 +285,42 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
 
             if (alreadySentToday) continue;
 
-            // Construir lista amigable de partidos
+            // Construir lista amigable de partidos con nombres reales de equipos
             var ci = new CultureInfo("es-MX");
             var matchSummaries = matchesToday.Select(m =>
             {
-                var home = m.HomeTeam?.Abbreviation ?? "LOC";
-                var away = m.AwayTeam?.Abbreviation ?? "VIS";
+                var home = !string.IsNullOrWhiteSpace(m.HomeTeam?.Name) ? m.HomeTeam.Name : (m.HomeTeam?.Abbreviation ?? "Local");
+                var away = !string.IsNullOrWhiteSpace(m.AwayTeam?.Name) ? m.AwayTeam.Name : (m.AwayTeam?.Abbreviation ?? "Visita");
                 var matchLocal = TimeZoneInfo.ConvertTimeFromUtc(m.DateUtc, tz);
                 return $"{home} vs {away} ({matchLocal.ToString("HH:mm", ci)})";
             }).ToList();
 
-            var summaryText = string.Join(", ", matchSummaries.Take(3));
-            if (matchesToday.Count > 3)
+            string matchSentence;
+            if (matchesToday.Count == 1)
             {
-                summaryText += $" y {matchesToday.Count - 3} más";
+                matchSentence = $"Hoy juega {matchSummaries[0]}";
             }
-
-            string title;
-            string message;
-
-            if (week.Status == "PUBLISHED")
+            else if (matchesToday.Count == 2)
             {
-                title = $"⚽ ¡Hoy arranca la Jornada {week.WeekNumber}!";
-                message = $"Partidos de hoy: {summaryText}. Recuerda que tus picks se bloquean al silbatazo del primer juego.";
+                matchSentence = $"Hoy juegan {matchSummaries[0]} y {matchSummaries[1]}";
             }
             else
             {
-                title = $"⚽ ¡Partidos de hoy en la Quiniela!";
-                message = $"{summaryText}. ¡Sigue los marcadores en vivo y suma puntos en la Jornada {week.WeekNumber}!";
+                var topMatches = string.Join(", ", matchSummaries.Take(2));
+                matchSentence = $"Hoy juegan {topMatches} y {matchesToday.Count - 2} más";
             }
+
+            var localNow = TimeZoneInfo.ConvertTimeFromUtc(nowUtc, tz);
+            var title = localNow.DayOfWeek switch
+            {
+                DayOfWeek.Friday => "🍻 ¡Viernes botanero!",
+                DayOfWeek.Saturday => "⚡ ¡Sábado de fútbol!",
+                DayOfWeek.Sunday => "🔥 ¡Domingo de fútbol!",
+                DayOfWeek.Monday => "⚽ ¡Lunes de partido!",
+                _ => "💥 ¡Fútbol entre semana!"
+            };
+
+            var message = $"{matchSentence}. ¡Ponte cómodo y sigue la jornada en la Quiniela! 🍿";
 
             var payload = new PushNotificationPayload(
                 Title: title,
