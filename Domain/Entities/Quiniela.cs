@@ -20,5 +20,6 @@ public class Quiniela : BaseAuditableEntity
     public ICollection<QuinielaMember> Members { get; set; } = new List<QuinielaMember>();
     public ICollection<Pick> Picks { get; set; } = new List<Pick>();
     public ICollection<WeeklyAward> WeeklyAwards { get; set; } = new List<WeeklyAward>();
+    public ICollection<WeeklyBulletin> WeeklyBulletins { get; set; } = new List<WeeklyBulletin>();
     public ICollection<PickAuditLog> AuditLogs { get; set; } = new List<PickAuditLog>();
 }

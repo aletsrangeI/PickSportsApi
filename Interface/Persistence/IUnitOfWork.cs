@@ -13,6 +13,7 @@ public interface IUnitOfWork : IDisposable
     IQuinielaMemberRepository QuinielaMembers { get; }
     IPickRepository Picks { get; }
     IWeeklyAwardRepository WeeklyAwards { get; }
+    IWeeklyBulletinRepository WeeklyBulletins { get; }
     IPickAuditLogRepository PickAuditLogs { get; }
     IPushSubscriptionRepository PushSubscriptions { get; }
     IPushNotificationLogRepository PushNotificationLogs { get; }

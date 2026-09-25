@@ -1286,6 +1286,57 @@ namespace Persistence.Migrations
                     b.ToTable("WeeklyAwards", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.WeeklyBulletin", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("AdminAnnouncement")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsPublished")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("PublishedAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<int>("QuinielaId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("WeekId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WeekId");
+
+                    b.HasIndex("QuinielaId", "WeekId")
+                        .IsUnique();
+
+                    b.ToTable("WeeklyBulletins", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.ContenidoCatalogo", b =>
                 {
                     b.HasOne("Domain.Entities.Catalogo", "Catalogo")
@@ -1563,6 +1614,25 @@ namespace Persistence.Migrations
                     b.Navigation("Week");
                 });
 
+            modelBuilder.Entity("Domain.Entities.WeeklyBulletin", b =>
+                {
+                    b.HasOne("Domain.Entities.Quiniela", "Quiniela")
+                        .WithMany("WeeklyBulletins")
+                        .HasForeignKey("QuinielaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.Week", "Week")
+                        .WithMany("WeeklyBulletins")
+                        .HasForeignKey("WeekId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Quiniela");
+
+                    b.Navigation("Week");
+                });
+
             modelBuilder.Entity("Domain.Entities.Catalogo", b =>
                 {
                     b.Navigation("Contenidos");
@@ -1600,6 +1670,8 @@ namespace Persistence.Migrations
                     b.Navigation("Picks");
 
                     b.Navigation("WeeklyAwards");
+
+                    b.Navigation("WeeklyBulletins");
                 });
 
             modelBuilder.Entity("Domain.Entities.QuinielaMember", b =>
@@ -1642,6 +1714,8 @@ namespace Persistence.Migrations
                     b.Navigation("Matches");
 
                     b.Navigation("WeeklyAwards");
+
+                    b.Navigation("WeeklyBulletins");
                 });
 #pragma warning restore 612, 618
         }

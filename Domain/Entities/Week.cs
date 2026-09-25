@@ -18,5 +18,6 @@ public class Week : BaseAuditableEntity
     public Season Season { get; set; } = null!;
     public ICollection<Match> Matches { get; set; } = new List<Match>();
     public ICollection<WeeklyAward> WeeklyAwards { get; set; } = new List<WeeklyAward>();
+    public ICollection<WeeklyBulletin> WeeklyBulletins { get; set; } = new List<WeeklyBulletin>();
     public ICollection<PickAuditLog> AuditLogs { get; set; } = new List<PickAuditLog>();
 }

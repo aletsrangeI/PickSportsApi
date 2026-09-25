@@ -40,6 +40,7 @@ public static class ConfigureServices
         services.AddSingleton<UseCases.Scoring.ScoringEngine>();
         services.AddScoped<IScoringApplication, UseCases.Scoring.ScoringApplication>();
         services.AddScoped<IWhatsAppReportService, UseCases.Reports.WhatsAppReportService>();
+        services.AddScoped<IBulletinApplication, UseCases.Bulletin.BulletinApplication>();
         services.AddScoped<IWebPushNotificationService, UseCases.Notifications.WebPushNotificationService>();
         services.AddScoped<INotificationsApplication, UseCases.Notifications.NotificationsApplication>();
         services.AddScoped<IQuinielaReminderApplication, UseCases.Notifications.QuinielaReminderApplication>();

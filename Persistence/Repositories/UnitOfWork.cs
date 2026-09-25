@@ -21,6 +21,7 @@ public class UnitOfWork : IUnitOfWork
         QuinielaMembers = new QuinielaMemberRepository(_dbContext);
         Picks = new PickRepository(_dbContext);
         WeeklyAwards = new WeeklyAwardRepository(_dbContext);
+        WeeklyBulletins = new WeeklyBulletinRepository(_dbContext);
         PickAuditLogs = new PickAuditLogRepository(_dbContext);
         PushSubscriptions = new PushSubscriptionRepository(_dbContext);
         PushNotificationLogs = new PushNotificationLogRepository(_dbContext);
@@ -41,6 +42,7 @@ public class UnitOfWork : IUnitOfWork
     public IQuinielaMemberRepository QuinielaMembers { get; }
     public IPickRepository Picks { get; }
     public IWeeklyAwardRepository WeeklyAwards { get; }
+    public IWeeklyBulletinRepository WeeklyBulletins { get; }
     public IPickAuditLogRepository PickAuditLogs { get; }
     public IPushSubscriptionRepository PushSubscriptions { get; }
     public IPushNotificationLogRepository PushNotificationLogs { get; }
