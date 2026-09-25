@@ -23,6 +23,7 @@ public class UnitOfWork : IUnitOfWork
         WeeklyAwards = new WeeklyAwardRepository(_dbContext);
         PickAuditLogs = new PickAuditLogRepository(_dbContext);
         PushSubscriptions = new PushSubscriptionRepository(_dbContext);
+        PushNotificationLogs = new PushNotificationLogRepository(_dbContext);
         EspnHealthLogs = new EspnHealthLogRepository(_dbContext);
         Catalogos = new CatalogoRepository(_dbContext);
         ContenidoCatalogos = new ContenidoCatalogoRepository(_dbContext);
@@ -42,6 +43,7 @@ public class UnitOfWork : IUnitOfWork
     public IWeeklyAwardRepository WeeklyAwards { get; }
     public IPickAuditLogRepository PickAuditLogs { get; }
     public IPushSubscriptionRepository PushSubscriptions { get; }
+    public IPushNotificationLogRepository PushNotificationLogs { get; }
     public IEspnHealthLogRepository EspnHealthLogs { get; }
     public ICatalogoRepository Catalogos { get; }
     public IContenidoCatalogoRepository ContenidoCatalogos { get; }

@@ -50,6 +50,7 @@ public static class ConfigureServices
         services.AddScoped<IWeeklyAwardRepository, WeeklyAwardRepository>();
         services.AddScoped<IPickAuditLogRepository, PickAuditLogRepository>();
         services.AddScoped<IPushSubscriptionRepository, PushSubscriptionRepository>();
+        services.AddScoped<IPushNotificationLogRepository, PushNotificationLogRepository>();
         services.AddScoped<IEspnHealthLogRepository, EspnHealthLogRepository>();
 
         // Dynamic Form Repositories

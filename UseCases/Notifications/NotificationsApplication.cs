@@ -132,13 +132,13 @@ public class NotificationsApplication : INotificationsApplication
         if (!sent)
         {
             response.isSuccess = false;
-            response.Message = "No se pudo enviar la notificación de prueba. Verifica que tengas una suscripción activa.";
+            response.Message = "No se pudo enviar la notificación. Verifica que tu dispositivo tenga permisos activos.";
             return response;
         }
 
         response.isSuccess = true;
         response.Data = true;
-        response.Message = "Notificación de prueba enviada correctamente.";
+        response.Message = "Notificación enviada correctamente a tu dispositivo.";
         return response;
     }
 }

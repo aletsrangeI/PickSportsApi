@@ -12,10 +12,14 @@ namespace WebApi.Controllers;
 public class NotificationsController : ControllerBase
 {
     private readonly INotificationsApplication _notificationsApplication;
+    private readonly IQuinielaReminderApplication _reminderApplication;
 
-    public NotificationsController(INotificationsApplication notificationsApplication)
+    public NotificationsController(
+        INotificationsApplication notificationsApplication,
+        IQuinielaReminderApplication reminderApplication)
     {
         _notificationsApplication = notificationsApplication;
+        _reminderApplication = reminderApplication;
     }
 
     private int GetCurrentUserId()
@@ -89,5 +93,21 @@ public class NotificationsController : ControllerBase
             return BadRequest(response);
         }
         return Ok(response);
+    }
+
+    /// <summary>
+    /// POST /api/notifications/trigger-reminders
+    /// Ejecuta de inmediato el ciclo de evaluación y despacho de recordatorios programados (Lunes apertura, Martes-Viernes rezagados, Días de partido).
+    /// </summary>
+    [HttpPost("trigger-reminders")]
+    public async Task<IActionResult> TriggerReminders([FromQuery] DateTime? simulatedUtc = null)
+    {
+        var sentCount = await _reminderApplication.ProcessDailyRemindersAsync(simulatedUtc);
+        return Ok(new
+        {
+            isSuccess = true,
+            message = $"Ciclo de recordatorios ejecutado. Se despacharon {sentCount} notificaciones.",
+            sentCount
+        });
     }
 }
