@@ -79,18 +79,20 @@ public class NotificationsController : ControllerBase
 
     /// <summary>
     /// POST /api/notifications/test
-    /// Envía una notificación push de prueba al usuario autenticado.
+    /// Envía una notificación push de bienvenida/activación. Exclusivo para Owners y Admins.
+    /// Si se pasa ?quinielaId={id}, se despacha a todos los miembros de esa quiniela.
+    /// Si no se pasa quinielaId, se despacha únicamente al dispositivo del Owner.
     /// </summary>
     [HttpPost("test")]
-    public async Task<IActionResult> SendTest()
+    public async Task<IActionResult> SendTest([FromQuery] int? quinielaId = null)
     {
         var userId = GetCurrentUserId();
         if (userId <= 0) return Unauthorized();
 
-        var response = await _notificationsApplication.SendTestNotificationAsync(userId);
+        var response = await _notificationsApplication.SendTestNotificationAsync(userId, quinielaId);
         if (!response.isSuccess)
         {
-            return BadRequest(response);
+            return StatusCode(response.Message.Contains("Acceso denegado") ? 403 : 400, response);
         }
         return Ok(response);
     }
@@ -98,10 +100,21 @@ public class NotificationsController : ControllerBase
     /// <summary>
     /// POST /api/notifications/trigger-reminders
     /// Ejecuta de inmediato el ciclo de evaluación y despacho de recordatorios programados (Lunes apertura, Martes-Viernes rezagados, Días de partido).
+    /// Exclusivo para Owners y Administradores.
     /// </summary>
     [HttpPost("trigger-reminders")]
     public async Task<IActionResult> TriggerReminders([FromQuery] DateTime? simulatedUtc = null)
     {
+        var userId = GetCurrentUserId();
+        if (userId <= 0) return Unauthorized();
+
+        // Validar que el usuario sea Admin u Owner
+        var authCheck = await _notificationsApplication.SendTestNotificationAsync(userId);
+        if (!authCheck.isSuccess && authCheck.Message.Contains("Acceso denegado"))
+        {
+            return StatusCode(403, new { isSuccess = false, message = "Acceso denegado: solo los propietarios (Owners) o administradores pueden detonar recordatorios." });
+        }
+
         var sentCount = await _reminderApplication.ProcessDailyRemindersAsync(simulatedUtc);
         return Ok(new
         {
