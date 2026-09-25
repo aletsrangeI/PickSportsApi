@@ -402,11 +402,6 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
             foreach (var member in members)
             {
                 var userPicks = picksByMember.GetValueOrDefault(member.Id, 0);
-                if (userPicks >= matches.Count)
-                {
-                    // Picks completos, no molestar
-                    continue;
-                }
 
                 var alreadySent = await _unitOfWork.PushNotificationLogs.HasNotificationBeenSentTodayAsync(
                     "LAST_HOUR_PICKS_REMINDER",
@@ -418,22 +413,36 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
 
                 if (alreadySent) continue;
 
-                var missingCount = matches.Count - userPicks;
-                var missingDesc = userPicks == 0 ? "todos tus pronósticos" : $"{missingCount} pronóstico(s)";
+                string title;
+                string message;
+
+                if (userPicks < matches.Count)
+                {
+                    var missingCount = matches.Count - userPicks;
+                    var missingDesc = userPicks == 0 ? "todos tus pronósticos" : $"{missingCount} pronóstico(s)";
+
+                    title = "🚨 ¡1 hora para el silbatazo!";
+                    message = $"Arranca {home} vs {away}. Tienes {missingDesc} sin responder en {quiniela.Name}. ¡Asegúralos antes de que se autollenen al azar!";
+                }
+                else
+                {
+                    title = "🍿 ¡1 hora para el silbatazo!";
+                    message = $"Arranca {home} vs {away}. ¡Tus pronósticos están listos en {quiniela.Name}! Ponte cómodo y sigue el partido en vivo. ⚽";
+                }
 
                 var payload = new PushNotificationPayload(
-                    Title: "🚨 ¡1 hora para el silbatazo!",
-                    Message: $"Arranca {home} vs {away}. Tienes {missingDesc} sin responder en {quiniela.Name}. ¡Asegúralos antes de que se autollenen al azar!",
+                    Title: title,
+                    Message: message,
                     Url: $"/fixtures?weekId={week.Id}",
                     Data: new
                     {
-                        type = "last_hour_picks_reminder",
+                        type = "last_hour_kickoff",
                         weekId = week.Id,
                         weekNumber = week.WeekNumber,
                         quinielaId = quiniela.Id,
                         userPicks,
                         totalMatches = matches.Count,
-                        missingCount
+                        hasCompleted = userPicks >= matches.Count
                     }
                 );
 

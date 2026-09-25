@@ -291,23 +291,31 @@ public class QuinielaReminderApplicationTests
         // ASSERT
         Assert.True(count > 0);
         // Debe enviar alerta de última hora solo a User 100 (incompleto)
+        // Debe enviar alerta de recordatorio a User 100 (incompleto)
         _mockWebPush.Verify(w => w.SendNotificationToUserAsync(
             100,
-            It.Is<PushNotificationPayload>(p => p.Title.Contains("1 hora para el silbatazo") && p.Message.Contains("Puebla vs Monterrey")),
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("1 hora para el silbatazo") && p.Message.Contains("sin responder")),
             It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // NO debe enviar alerta a User 101 (completo)
+        // Debe enviar aviso de disfrute a User 101 (completo)
         _mockWebPush.Verify(w => w.SendNotificationToUserAsync(
             101,
-            It.IsAny<PushNotificationPayload>(),
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("1 hora para el silbatazo") && p.Message.Contains("están listos")),
             It.IsAny<CancellationToken>()),
-            Times.Never);
+            Times.Once);
 
-        // Debe registrar en PushNotificationLogs
+        // Debe registrar en PushNotificationLogs para ambos
         _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log =>
             log.NotificationType == "LAST_HOUR_PICKS_REMINDER" &&
             log.UserId == 100 &&
+            log.WeekId == 100 &&
+            log.QuinielaId == 1)),
+            Times.Once);
+
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log =>
+            log.NotificationType == "LAST_HOUR_PICKS_REMINDER" &&
+            log.UserId == 101 &&
             log.WeekId == 100 &&
             log.QuinielaId == 1)),
             Times.Once);
