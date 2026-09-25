@@ -28,6 +28,7 @@ public class DatabaseInitializer
             }
             await SeedSportsAndLeaguesAsync();
             await SeedAdminUserAsync();
+            await SeedSystemConfigsAsync();
             await _context.SaveChangesAsync();
             _logger.LogInformation("Database seeding completed successfully.");
         }
@@ -170,6 +171,35 @@ public class DatabaseInitializer
                 Created = DateTime.UtcNow
             };
             await _context.Users.AddAsync(admin);
+        }
+    }
+
+    private async Task SeedSystemConfigsAsync()
+    {
+        var configs = new List<(string Key, string Value, string Description, bool IsPublic)>
+        {
+            ("App:MinSupportedClientVersion", "1.0.0", "Versión mínima compatible con los contratos de API y migraciones actuales", true),
+            ("App:LatestClientVersion", "1.0.0", "Versión oficial más reciente del frontend disponible", true),
+            ("App:MaintenanceMode", "false", "Flag para suspender temporalmente el acceso", true),
+            ("App:MaintenanceMessage", "", "Mensaje informativo durante ventanas de mantenimiento", true)
+        };
+
+        foreach (var item in configs)
+        {
+            var exists = await _context.SystemConfigs.AnyAsync(c => c.Key == item.Key);
+            if (!exists)
+            {
+                await _context.SystemConfigs.AddAsync(new SystemConfig
+                {
+                    Key = item.Key,
+                    Value = item.Value,
+                    Description = item.Description,
+                    IsPublic = item.IsPublic,
+                    Active = true,
+                    Created = DateTime.UtcNow,
+                    CreatedBy = "System"
+                });
+            }
         }
     }
 

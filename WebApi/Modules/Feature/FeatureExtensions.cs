@@ -43,6 +43,7 @@ public static class FeatureExtensions
     {
         var myPolicy = "policyPickSport";
 
+        services.AddMemoryCache();
         services.AddCors(options => options.AddPolicy(myPolicy, builder => builder
             .SetIsOriginAllowed(_ => true) // Permitir cualquier origen
             .AllowAnyHeader()

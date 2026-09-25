@@ -46,6 +46,11 @@ public class ModelIntegrityTests : IDisposable
         var admin = await _context.Users.FirstOrDefaultAsync(u => u.Email == "admin@picksports.local");
         Assert.NotNull(admin);
         Assert.Equal("ADMIN", admin.Role);
+
+        var configs = await _context.SystemConfigs.ToListAsync();
+        Assert.NotEmpty(configs);
+        Assert.Contains(configs, c => c.Key == "App:MinSupportedClientVersion" && c.Value == "1.0.0");
+        Assert.Contains(configs, c => c.Key == "App:LatestClientVersion" && c.Value == "1.0.0");
     }
 
     [Fact]
