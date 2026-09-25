@@ -212,7 +212,7 @@ public class QuinielaReminderApplicationTests
         Assert.True(count > 0);
         _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
             1,
-            It.Is<PushNotificationPayload>(p => p.Title.Contains("Partidos de hoy") && p.Message.Contains("AME vs CHI")),
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("Sábado de fútbol") && p.Message.Contains("AME vs CHI")),
             It.IsAny<CancellationToken>()),
             Times.Once);
 
