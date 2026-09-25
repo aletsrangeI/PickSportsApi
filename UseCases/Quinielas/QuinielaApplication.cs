@@ -148,6 +148,7 @@ public class QuinielaApplication : IQuinielaApplication
         var detailDto = _mapper.Map<QuinielaDetailDto>(quiniela);
         var myMembership = quiniela.Members.FirstOrDefault(m => m.UserId == userId && m.Active);
         detailDto.UserRole = myMembership?.Role ?? (quiniela.OwnerId == userId ? "OWNER" : null);
+        detailDto.CurrentUserMemberId = myMembership?.Id;
 
         response.isSuccess = true;
         response.Message = "Detalle de quiniela obtenido con éxito.";
