@@ -32,6 +32,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<QuinielaMember> QuinielaMembers { get; set; }
     public DbSet<Pick> Picks { get; set; }
     public DbSet<WeeklyAward> WeeklyAwards { get; set; }
+    public DbSet<WeeklyBulletin> WeeklyBulletins { get; set; }
     public DbSet<PickAuditLog> PickAuditLogs { get; set; }
     public DbSet<PushSubscription> PushSubscriptions { get; set; }
     public DbSet<PushNotificationLog> PushNotificationLogs { get; set; }
