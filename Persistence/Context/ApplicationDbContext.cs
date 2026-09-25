@@ -42,6 +42,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<ContenidoCatalogo> ContenidoCatalogos { get; set; }
     public DbSet<FormField> FormFields { get; set; }
 
+    // System Settings & Versioning
+    public DbSet<SystemConfig> SystemConfigs { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(Assembly.GetExecutingAssembly());
