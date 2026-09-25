@@ -109,8 +109,8 @@ public class NotificationsController : ControllerBase
         if (userId <= 0) return Unauthorized();
 
         // Validar que el usuario sea Admin u Owner
-        var authCheck = await _notificationsApplication.SendTestNotificationAsync(userId);
-        if (!authCheck.isSuccess && authCheck.Message.Contains("Acceso denegado"))
+        var canManage = await _notificationsApplication.CanManageRemindersAsync(userId);
+        if (!canManage)
         {
             return StatusCode(403, new { isSuccess = false, message = "Acceso denegado: solo los propietarios (Owners) o administradores pueden detonar recordatorios." });
         }

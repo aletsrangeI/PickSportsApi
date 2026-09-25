@@ -568,6 +568,65 @@ namespace Persistence.Migrations
                     b.ToTable("PickAuditLogs", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.PushNotificationLog", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("DateLocal")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int>("DeliveredCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("NotificationType")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<int>("QuinielaId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("SentAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("WeekId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QuinielaId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("WeekId");
+
+                    b.HasIndex("NotificationType", "WeekId", "QuinielaId", "UserId", "DateLocal");
+
+                    b.ToTable("PushNotificationLogs", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.PushSubscription", b =>
                 {
                     b.Property<int>("Id")
@@ -1306,6 +1365,32 @@ namespace Persistence.Migrations
                     b.Navigation("Member");
 
                     b.Navigation("Quiniela");
+
+                    b.Navigation("Week");
+                });
+
+            modelBuilder.Entity("Domain.Entities.PushNotificationLog", b =>
+                {
+                    b.HasOne("Domain.Entities.Quiniela", "Quiniela")
+                        .WithMany()
+                        .HasForeignKey("QuinielaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Domain.Entities.Week", "Week")
+                        .WithMany()
+                        .HasForeignKey("WeekId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Quiniela");
+
+                    b.Navigation("User");
 
                     b.Navigation("Week");
                 });
