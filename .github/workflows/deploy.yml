@@ -140,34 +140,81 @@ jobs:
           ss -tulpn | grep 5287 || echo ">> Puerto 5287 libre."
 
           docker compose up -d --no-deps --remove-orphans api
-          echo ">> Esperando verificación de salud de picksports-api..."
-          for i in $(seq 1 30); do
-            if docker inspect --format='{{json .State.Health.Status}}' picksports-api 2>/dev/null | grep -q 'healthy'; then
+          echo ">> Esperando verificación de salud de picksports-api (máx. 180s)..."
+          HEALTH_OK=0
+          for i in $(seq 1 45); do
+            HEALTH_STATUS=$(docker inspect --format='{{json .State.Health.Status}}' picksports-api 2>/dev/null | tr -d '"' || echo unknown)
+            if [ "$HEALTH_STATUS" = "healthy" ]; then
               echo ">> picksports-api está saludable y listo."
+              HEALTH_OK=1
               break
             fi
-            if [ "$i" -eq 30 ]; then
-              echo ">> ERROR: Timeout esperando estado 'healthy'. Logs del contenedor:"
-              docker logs --tail 50 picksports-api || true
+            echo "Esperando estado saludable (intento $i/45, estado: ${HEALTH_STATUS:-unknown})..."
+            sleep 4
+          done
+
+          if [ "$HEALTH_OK" -ne 1 ]; then
+            echo ">> Docker no reportó 'healthy' a tiempo. Verificando /api/health directamente en el host antes de abortar..."
+            HTTP_OK=0
+            for j in $(seq 1 5); do
+              if curl -sf -m 5 http://localhost:5287/api/health >/dev/null 2>&1 || wget -q -T 5 -O /dev/null http://localhost:5287/api/health 2>/dev/null; then
+                HTTP_OK=1
+                break
+              fi
+              echo "Reintentando /api/health (intento $j/5)..."
+              sleep 3
+            done
+            if [ "$HTTP_OK" -eq 1 ]; then
+              echo ">> ADVERTENCIA: /api/health responde OK aunque el healthcheck de Docker no marcó 'healthy'. Despliegue aceptado."
+              docker inspect --format='{{json .State.Health}}' picksports-api 2>/dev/null | head -c 800 || true
+            else
+              echo ">> ERROR: Timeout esperando salud del contenedor y /api/health no responde. Logs del contenedor:"
+              docker logs --tail 80 picksports-api || true
               exit 1
             fi
-            echo "Esperando estado saludable (intento $i/30)..."
-            sleep 2
-          done
+          fi
           echo ">> Contenedor picksports-api desplegado exitosamente."
           DEPLOY_SCRIPT_EOF
           
-          MAX_RETRIES=3
+          # Preflight: confirmar que la ruta TCP real hacia sshd (puerto 22) funciona.
+          # tailscale ping puede dar OK por DERP mientras la ruta directa está degradada
+          # (causa conocida de KEX SSH truncado: "expecting SSH2_MSG_KEX_ECDH_REPLY" + timeout).
+          echo ">> Preflight: verificando ruta TCP hacia $HOMELAB_HOST:22..."
+          for i in $(seq 1 10); do
+            if timeout 8 bash -c "exec 3<>/dev/tcp/$HOMELAB_HOST/22" 2>/dev/null; then
+              echo ">> Ruta TCP hacia puerto 22 confirmada."
+              break
+            fi
+            echo ">> Puerto 22 aún no usable (intento $i/10). Re-estableciendo ruta Tailscale..."
+            timeout 15 tailscale ping -c 2 "$HOMELAB_HOST" >/dev/null 2>&1 || true
+            sleep 4
+          done
+
+          MAX_RETRIES=6
           COUNT=0
-          until [ "$COUNT" -ge "$MAX_RETRIES" ]
-          do
-            ssh -v -o KexAlgorithms=curve25519-sha256 -o IPQoS=throughput -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/id_ed25519 "$SSH_USER@$HOMELAB_HOST" "bash -s" < deploy_remote.sh && break
+          DEPLOY_OK=0
+          SSH_EXIT=0
+          while [ "$COUNT" -lt "$MAX_RETRIES" ]; do
+            set +e
+            ssh -v -o KexAlgorithms=curve25519-sha256 -o IPQoS=throughput -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ConnectionAttempts=2 -i ~/.ssh/id_ed25519 "$SSH_USER@$HOMELAB_HOST" "bash -s" < deploy_remote.sh
+            SSH_EXIT=$?
+            set -e
+            if [ "$SSH_EXIT" -eq 0 ]; then
+              DEPLOY_OK=1
+              break
+            fi
             COUNT=$((COUNT+1))
+            if [ "$SSH_EXIT" -ne 255 ]; then
+              echo ">> El script remoto falló con código $SSH_EXIT (fallo de despliegue, no de conexión). No se reintenta."
+              break
+            fi
             if [ "$COUNT" -lt "$MAX_RETRIES" ]; then
-              echo ">> Falló conexión SSH. Reintentando en 5 segundos (intento $((COUNT+1))/$MAX_RETRIES)..."
-              sleep 5
-            else
-              echo ">> Error crítico: Se agotaron los reintentos de SSH."
-              exit 1
+              echo ">> Falló conexión SSH (código 255, p.ej. KEX truncado sobre WireGuard). Re-estableciendo ruta y reintentando en 15s (intento $((COUNT+1))/$MAX_RETRIES)..."
+              timeout 15 tailscale ping -c 2 "$HOMELAB_HOST" >/dev/null 2>&1 || true
+              sleep 15
             fi
           done
+          if [ "$DEPLOY_OK" -ne 1 ]; then
+            echo ">> Error crítico: el despliegue en Homelab no pudo completarse (último código SSH: $SSH_EXIT)."
+            exit 1
+          fi
