@@ -124,15 +124,69 @@ public class NotificationsApplication : INotificationsApplication
         return Task.FromResult(response);
     }
 
-    public async Task<Response<bool>> SendTestNotificationAsync(int userId)
+    public async Task<Response<bool>> SendTestNotificationAsync(int userId, int? quinielaId = null)
     {
         var response = new Response<bool>();
-        var sent = await _webPushService.SendTestNotificationAsync(userId);
 
+        // 1. Validar que el usuario sea ADMIN global o OWNER/ADMIN en al menos una quiniela
+        var user = await _unitOfWork.Users.GetAsync(userId);
+        var userMemberships = (await _unitOfWork.QuinielaMembers.GetByUserIdAsync(userId)).ToList();
+
+        bool isGlobalAdmin = string.Equals(user?.Role, "ADMIN", StringComparison.OrdinalIgnoreCase);
+        bool isAnyOwner = isGlobalAdmin || userMemberships.Any(m =>
+            string.Equals(m.Role, "OWNER", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(m.Role, "ADMIN", StringComparison.OrdinalIgnoreCase));
+
+        if (!isAnyOwner)
+        {
+            response.isSuccess = false;
+            response.Message = "Acceso denegado: solo los propietarios (Owners) o administradores pueden detonar notificaciones push.";
+            return response;
+        }
+
+        // 2. Si se especifica una quiniela, detonar a todos los miembros de esa quiniela
+        if (quinielaId.HasValue)
+        {
+            var targetQuiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId.Value);
+            if (targetQuiniela == null)
+            {
+                response.isSuccess = false;
+                response.Message = "La quiniela especificada no existe.";
+                return response;
+            }
+
+            var membershipInTarget = userMemberships.FirstOrDefault(m => m.QuinielaId == quinielaId.Value);
+            bool isQuinielaOwner = isGlobalAdmin || (membershipInTarget != null &&
+                (string.Equals(membershipInTarget.Role, "OWNER", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(membershipInTarget.Role, "ADMIN", StringComparison.OrdinalIgnoreCase)));
+
+            if (!isQuinielaOwner)
+            {
+                response.isSuccess = false;
+                response.Message = "No tienes permisos de Owner en esta quiniela para detonar notificaciones a sus miembros.";
+                return response;
+            }
+
+            var payload = new PushNotificationPayload(
+                Title: "⚽ ¡Notificaciones activadas!",
+                Message: $"Todo listo en {targetQuiniela.Name}. Te avisaremos aquí sobre el inicio de jornadas, marcadores en vivo y la tabla de posiciones.",
+                Url: "/",
+                Data: new { type = "activation", sentAt = DateTime.UtcNow, quinielaId = quinielaId.Value }
+            );
+
+            var sentCount = await _webPushService.SendNotificationToQuinielaAsync(quinielaId.Value, payload);
+            response.isSuccess = true;
+            response.Data = true;
+            response.Message = $"Notificación enviada exitosamente a los miembros de '{targetQuiniela.Name}' ({sentCount} dispositivos alcanzados).";
+            return response;
+        }
+
+        // 3. Si no se especificó quiniela, enviar prueba exclusiva al propio Owner
+        var sent = await _webPushService.SendTestNotificationAsync(userId);
         if (!sent)
         {
             response.isSuccess = false;
-            response.Message = "No se pudo enviar la notificación. Verifica que tu dispositivo tenga permisos activos.";
+            response.Message = "No se pudo enviar la notificación. Verifica que tu dispositivo tenga permisos push activos.";
             return response;
         }
 
