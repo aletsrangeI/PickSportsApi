@@ -223,4 +223,93 @@ public class QuinielaReminderApplicationTests
             log.DateLocal == "2026-10-03")),
             Times.Once);
     }
+
+    [Fact]
+    public async Task ProcessDailyReminders_OneHourBeforeKickoff_ShouldSendLastHourAlertToMembersWithIncompletePicks()
+    {
+        // ARRANGE: Viernes a las 18:00 hora de México (00:00 UTC del sábado)
+        // El primer partido arranca a las 19:00 hora de México (01:00 UTC del sábado) -> Falta exactamente 1 hora (60 min)
+        var fridaySimulatedUtc = new DateTime(2026, 9, 26, 0, 0, 0, DateTimeKind.Utc);
+        var matchKickoffUtc = new DateTime(2026, 9, 26, 1, 0, 0, DateTimeKind.Utc);
+
+        var quiniela = new Quiniela { Id = 1, LeagueId = 10, Name = "Quiniela Amigos", Active = true };
+        var season = new Season { Id = 5, LeagueId = 10, Active = true };
+        var week = new Week { Id = 100, SeasonId = 5, WeekNumber = 10, Status = "PUBLISHED", FirstGameUtc = matchKickoffUtc, Active = true };
+
+        var match1 = new DbMatch
+        {
+            Id = 50,
+            WeekId = 100,
+            DateUtc = matchKickoffUtc,
+            HomeTeam = new Team { Name = "Puebla", Abbreviation = "PUE" },
+            AwayTeam = new Team { Name = "Monterrey", Abbreviation = "MTY" }
+        };
+        var match2 = new DbMatch
+        {
+            Id = 51,
+            WeekId = 100,
+            DateUtc = matchKickoffUtc.AddHours(2),
+            HomeTeam = new Team { Name = "Tijuana", Abbreviation = "TIJ" },
+            AwayTeam = new Team { Name = "Atlas", Abbreviation = "ATS" }
+        };
+
+        var memberIncomplete = new QuinielaMember { Id = 10, QuinielaId = 1, UserId = 100, Active = true };
+        var memberComplete = new QuinielaMember { Id = 11, QuinielaId = 1, UserId = 101, Active = true };
+
+        var completePicks = new List<Pick>
+        {
+            new() { Id = 1, MemberId = 11, MatchId = 50, PickAbbr = "PUE" },
+            new() { Id = 2, MemberId = 11, MatchId = 51, PickAbbr = "ATS" }
+        };
+        var incompletePicks = new List<Pick>
+        {
+            new() { Id = 3, MemberId = 10, MatchId = 50, PickAbbr = "PUE" }
+            // Le falta match 51
+        };
+
+        _mockQuinielas.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(new List<Week> { week });
+        _mockMatches.Setup(m => m.GetByWeekIdAsync(100)).ReturnsAsync(new List<DbMatch> { match1, match2 });
+        _mockMembers.Setup(m => m.GetMembersAsync(1)).ReturnsAsync(new List<QuinielaMember> { memberIncomplete, memberComplete });
+        _mockPicks.Setup(p => p.GetAllPicksForWeekAsync(1, 100)).ReturnsAsync(completePicks.Concat(incompletePicks).ToList());
+
+        // Aseguramos que la cartelera de la mañana (10:30) ya se haya enviado para aislar la regla de 1 hora
+        _mockLogs.Setup(l => l.HasNotificationBeenSentTodayAsync("MATCHDAY_MORNING_ROUNDUP", 100, 1, null, "2026-09-25", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _mockLogs.Setup(l => l.HasNotificationBeenSentTodayAsync("LAST_HOUR_PICKS_REMINDER", 100, 1, 100, "2026-09-25", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        _mockWebPush.Setup(w => w.SendNotificationToUserAsync(100, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        var count = await service.ProcessDailyRemindersAsync(fridaySimulatedUtc);
+
+        // ASSERT
+        Assert.True(count > 0);
+        // Debe enviar alerta de última hora solo a User 100 (incompleto)
+        _mockWebPush.Verify(w => w.SendNotificationToUserAsync(
+            100,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("1 hora para el silbatazo") && p.Message.Contains("Puebla vs Monterrey")),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // NO debe enviar alerta a User 101 (completo)
+        _mockWebPush.Verify(w => w.SendNotificationToUserAsync(
+            101,
+            It.IsAny<PushNotificationPayload>(),
+            It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Debe registrar en PushNotificationLogs
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log =>
+            log.NotificationType == "LAST_HOUR_PICKS_REMINDER" &&
+            log.UserId == 100 &&
+            log.WeekId == 100 &&
+            log.QuinielaId == 1)),
+            Times.Once);
+    }
 }
