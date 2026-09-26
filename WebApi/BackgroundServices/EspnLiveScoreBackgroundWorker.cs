@@ -122,8 +122,28 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
                         // Re-leer partidos después del sync
                         var matchesAfter = (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
 
-                        // Detectar si hay partidos actualmente en juego
-                        if (matchesAfter.Any(m => string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase)))
+                        // Detectar si hay partidos actualmente en juego o en ventana de juego activa
+                        var hasLiveOrImminent = matchesAfter.Any(m =>
+                            string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase) ||
+                            (string.Equals(m.StatusState, "pre", StringComparison.OrdinalIgnoreCase) &&
+                             DateTime.UtcNow >= m.DateUtc.AddMinutes(-20) &&
+                             DateTime.UtcNow <= m.DateUtc.AddHours(3))
+                        );
+
+                        if (!hasLiveOrImminent && week.Status == "LOCKED")
+                        {
+                            var hasPendingSoon = matchesAfter.Any(m =>
+                                !string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) &&
+                                !string.Equals(m.StatusState, "postponed", StringComparison.OrdinalIgnoreCase) &&
+                                (m.DateUtc.Date == DateTime.UtcNow.Date || m.DateUtc <= DateTime.UtcNow.AddHours(4))
+                            );
+                            if (hasPendingSoon)
+                            {
+                                hasLiveOrImminent = true;
+                            }
+                        }
+
+                        if (hasLiveOrImminent)
                         {
                             hasActiveMatches = true;
                         }
