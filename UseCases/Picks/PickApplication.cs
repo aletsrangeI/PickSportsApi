@@ -12,11 +12,16 @@ public class PickApplication : IPickApplication
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly SubmitPickDtoValidator _submitValidator;
+    private readonly IEspnSyncService? _espnSync;
 
-    public PickApplication(IUnitOfWork unitOfWork, SubmitPickDtoValidator submitValidator)
+    public PickApplication(
+        IUnitOfWork unitOfWork,
+        SubmitPickDtoValidator submitValidator,
+        IEspnSyncService? espnSync = null)
     {
         _unitOfWork = unitOfWork;
         _submitValidator = submitValidator;
+        _espnSync = espnSync;
     }
 
     public async Task<Response<PickDto>> SubmitPickAsync(int quinielaId, int userId, SubmitPickRequestDto request)
@@ -246,6 +251,34 @@ public class PickApplication : IPickApplication
 
         bool isLocked = week.Status == "LOCKED" || week.Status == "SCORED";
         bool isRevealed = isLocked;
+
+        // 5. Auto-sincronización bajo demanda desde ESPN si hay partidos en juego o en horario activo
+        // y su última sincronización tiene más de 45 segundos de antigüedad
+        if (_espnSync != null && matches.Any())
+        {
+            var now = DateTime.UtcNow;
+            var isAnyMatchActiveOrImminent = matches.Any(m =>
+                string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase) ||
+                (string.Equals(m.StatusState, "pre", StringComparison.OrdinalIgnoreCase) &&
+                 now >= m.DateUtc.AddMinutes(-10) &&
+                 now <= m.DateUtc.AddHours(3))
+            );
+
+            var oldestSync = matches.Min(m => m.LastSyncUtc);
+            if (isAnyMatchActiveOrImminent && (now - oldestSync) > TimeSpan.FromSeconds(45))
+            {
+                try
+                {
+                    await _espnSync.SyncWeekAsync(weekId);
+                    matches = (await _unitOfWork.Matches.GetByWeekIdAsync(weekId)).ToList();
+                }
+                catch
+                {
+                    // Fallback transparente a datos en BD si ESPN no responde
+                }
+            }
+        }
+
         var matchDtos = matches.Select(m => new MatchDto
         {
             Id = m.Id,
