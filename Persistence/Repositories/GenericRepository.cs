@@ -93,7 +93,23 @@ public class GenericRepository<T> : IGenericRepository<T> where T : class
 
     public virtual async Task<bool> UpdateAsync(T entity)
     {
-        _dbSet.Update(entity);
+        var entry = _context.Entry(entity);
+        if (entry.State == Microsoft.EntityFrameworkCore.EntityState.Detached)
+        {
+            var keyProperty = _context.Model.FindEntityType(typeof(T))?.FindPrimaryKey()?.Properties.FirstOrDefault();
+            if (keyProperty != null)
+            {
+                var keyValue = keyProperty.PropertyInfo?.GetValue(entity);
+                var tracked = _context.ChangeTracker.Entries<T>()
+                    .FirstOrDefault(e => keyProperty.PropertyInfo?.GetValue(e.Entity)?.Equals(keyValue) == true);
+                if (tracked != null)
+                {
+                    tracked.CurrentValues.SetValues(entity);
+                    return await _context.SaveChangesAsync() > 0;
+                }
+            }
+            _dbSet.Update(entity);
+        }
         return await _context.SaveChangesAsync() > 0;
     }
 

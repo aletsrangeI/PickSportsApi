@@ -497,8 +497,13 @@ public class EspnSyncService : IEspnSyncService
                 }
 
                 await _unitOfWork.Matches.UpdateAsync(existing);
-                matchesUpserted++;
             }
+        }
+
+        if (!week.FirstGameUtc.HasValue && games.Count > 0)
+        {
+            week.FirstGameUtc = games.Min(g => g.DateUtc);
+            await _unitOfWork.Weeks.UpdateAsync(week);
         }
 
         await _unitOfWork.Save();
