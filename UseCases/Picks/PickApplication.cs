@@ -221,20 +221,31 @@ public class PickApplication : IPickApplication
             return response;
         }
 
-        // 3. Lazy Locking si expiró el tiempo del primer partido
-        if (week.Status == "PUBLISHED" && week.FirstGameUtc.HasValue && DateTime.UtcNow >= week.FirstGameUtc.Value)
+        // 3. Obtener partidos de la jornada
+        var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(weekId)).ToList();
+
+        // 4. Lazy Locking si expiró el tiempo del primer partido o si algún partido ya comenzó
+        if (week.Status == "PUBLISHED")
         {
-            week.Status = "LOCKED";
-            week.LockedAt = DateTime.UtcNow;
-            _unitOfWork.Weeks.Update(week);
-            await _unitOfWork.Save();
+            var earliestMatch = matches.OrderBy(m => m.DateUtc).FirstOrDefault()?.DateUtc;
+            var effectiveDeadline = week.FirstGameUtc ?? earliestMatch;
+            var anyMatchStarted = matches.Any(m => m.StatusState == "in" || m.StatusState == "post");
+
+            if ((effectiveDeadline.HasValue && DateTime.UtcNow >= effectiveDeadline.Value) || anyMatchStarted)
+            {
+                week.Status = "LOCKED";
+                week.LockedAt = DateTime.UtcNow;
+                if (!week.FirstGameUtc.HasValue && earliestMatch.HasValue)
+                {
+                    week.FirstGameUtc = earliestMatch;
+                }
+                _unitOfWork.Weeks.Update(week);
+                await _unitOfWork.Save();
+            }
         }
 
         bool isLocked = week.Status == "LOCKED" || week.Status == "SCORED";
         bool isRevealed = isLocked;
-
-        // 4. Obtener partidos de la jornada
-        var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(weekId)).ToList();
         var matchDtos = matches.Select(m => new MatchDto
         {
             Id = m.Id,
