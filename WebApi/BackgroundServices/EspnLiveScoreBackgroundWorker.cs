@@ -90,62 +90,72 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
 
             foreach (var week in weeks)
             {
-                var matchesBefore = (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
-                var matchesBeforeDict = matchesBefore.ToDictionary(m => m.Id);
-
-                // A. Verificar arranque del 1er partido (PUBLISHED -> LOCKED + Autofill)
-                var shouldLock = week.Status == "PUBLISHED" && (
-                    (week.FirstGameUtc.HasValue && DateTime.UtcNow >= week.FirstGameUtc.Value) ||
-                    matchesBefore.Any(m => string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase) ||
-                                           string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase))
-                );
-
-                if (shouldLock)
+                try
                 {
-                    await LockWeekAndAutofillAsync(week, season, unitOfWork, webPush, ct);
-                }
+                    var matchesBefore = (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
+                    var matchesBeforeDict = matchesBefore.ToDictionary(m => m.Id);
 
-                // B. Si la jornada está bloqueada o hay partidos en vivo hoy, sincronizar ESPN
-                var hasMatchesToday = matchesBefore.Any(m => m.DateUtc.Date == DateTime.UtcNow.Date ||
-                                                             string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase));
+                    // A. Verificar arranque del 1er partido (PUBLISHED -> LOCKED + Autofill)
+                    var firstMatchDate = matchesBefore.OrderBy(m => m.DateUtc).FirstOrDefault()?.DateUtc;
+                    var effectiveFirstGameUtc = week.FirstGameUtc ?? firstMatchDate;
 
-                if (week.Status == "LOCKED" || hasMatchesToday)
-                {
-                    _logger.LogInformation("[EspnLiveWorker] Sincronizando jornada {0} (ID={1}) desde ESPN...", week.WeekNumber, week.Id);
-                    await espnSync.SyncWeekAsync(week.Id, ct);
-
-                    // Re-leer partidos después del sync
-                    var matchesAfter = (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
-
-                    // Detectar si hay partidos actualmente en juego
-                    if (matchesAfter.Any(m => string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        hasActiveMatches = true;
-                    }
-
-                    // C. Detectar partidos que recién finalizaron (StatusState cambió a "post")
-                    var newlyFinished = matchesAfter.Where(m =>
-                        string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) &&
-                        (!matchesBeforeDict.TryGetValue(m.Id, out var before) ||
-                         !string.Equals(before.StatusState, "post", StringComparison.OrdinalIgnoreCase))
-                    ).ToList();
-
-                    if (newlyFinished.Count > 0)
-                    {
-                        _logger.LogInformation("[EspnLiveWorker] Se detectaron {0} partidos recién concluidos en jornada {1}.", newlyFinished.Count, week.WeekNumber);
-                        await NotifyFinishedMatchesAsync(newlyFinished, week, season, unitOfWork, webPush, ct);
-                    }
-
-                    // D. Verificar si la jornada concluyó por completo (todos los partidos en "post" o "postponed")
-                    var allFinished = matchesAfter.Count > 0 && matchesAfter.All(m =>
-                        string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(m.StatusState, "postponed", StringComparison.OrdinalIgnoreCase)
+                    var shouldLock = week.Status == "PUBLISHED" && (
+                        (effectiveFirstGameUtc.HasValue && DateTime.UtcNow >= effectiveFirstGameUtc.Value) ||
+                        matchesBefore.Any(m => string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase) ||
+                                               string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase))
                     );
 
-                    if (allFinished && week.Status == "LOCKED")
+                    if (shouldLock)
                     {
-                        await CloseAndScoreWeekAsync(week, season, unitOfWork, scoringApp, webPush, ct);
+                        await LockWeekAndAutofillAsync(week, season, unitOfWork, webPush, ct);
                     }
+
+                    // B. Si la jornada está bloqueada o hay partidos en vivo hoy, sincronizar ESPN
+                    var hasMatchesToday = matchesBefore.Any(m => m.DateUtc.Date == DateTime.UtcNow.Date ||
+                                                                 string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase));
+
+                    if (week.Status == "LOCKED" || hasMatchesToday)
+                    {
+                        _logger.LogInformation("[EspnLiveWorker] Sincronizando jornada {0} (ID={1}) desde ESPN...", week.WeekNumber, week.Id);
+                        await espnSync.SyncWeekAsync(week.Id, ct);
+
+                        // Re-leer partidos después del sync
+                        var matchesAfter = (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
+
+                        // Detectar si hay partidos actualmente en juego
+                        if (matchesAfter.Any(m => string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase)))
+                        {
+                            hasActiveMatches = true;
+                        }
+
+                        // C. Detectar partidos que recién finalizaron (StatusState cambió a "post")
+                        var newlyFinished = matchesAfter.Where(m =>
+                            string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) &&
+                            (!matchesBeforeDict.TryGetValue(m.Id, out var before) ||
+                             !string.Equals(before.StatusState, "post", StringComparison.OrdinalIgnoreCase))
+                        ).ToList();
+
+                        if (newlyFinished.Count > 0)
+                        {
+                            _logger.LogInformation("[EspnLiveWorker] Se detectaron {0} partidos recién concluidos en jornada {1}.", newlyFinished.Count, week.WeekNumber);
+                            await NotifyFinishedMatchesAsync(newlyFinished, week, season, unitOfWork, webPush, ct);
+                        }
+
+                        // D. Verificar si la jornada concluyó por completo (todos los partidos en "post" o "postponed")
+                        var allFinished = matchesAfter.Count > 0 && matchesAfter.All(m =>
+                            string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) ||
+                            string.Equals(m.StatusState, "postponed", StringComparison.OrdinalIgnoreCase)
+                        );
+
+                        if (allFinished && week.Status == "LOCKED")
+                        {
+                            await CloseAndScoreWeekAsync(week, season, unitOfWork, scoringApp, webPush, ct);
+                        }
+                    }
+                }
+                catch (Exception weekEx)
+                {
+                    _logger.LogError("[EspnLiveWorker] Error procesando jornada {0} (ID={1}): {2}", week.WeekNumber, week.Id, weekEx.Message);
                 }
             }
         }
