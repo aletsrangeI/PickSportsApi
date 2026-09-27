@@ -28,6 +28,7 @@ public class EspnLiveScoreBackgroundWorkerTests
     private readonly Mock<IQuinielaMemberRepository> _mockMembers = new();
     private readonly Mock<IPickRepository> _mockPicks = new();
     private readonly Mock<ILeagueRepository> _mockLeagues = new();
+    private readonly Mock<IPushNotificationLogRepository> _mockPushNotificationLogs = new();
 
     public EspnLiveScoreBackgroundWorkerTests()
     {
@@ -38,6 +39,7 @@ public class EspnLiveScoreBackgroundWorkerTests
         _mockUow.Setup(u => u.QuinielaMembers).Returns(_mockMembers.Object);
         _mockUow.Setup(u => u.Picks).Returns(_mockPicks.Object);
         _mockUow.Setup(u => u.Leagues).Returns(_mockLeagues.Object);
+        _mockUow.Setup(u => u.PushNotificationLogs).Returns(_mockPushNotificationLogs.Object);
     }
 
     [Fact]
@@ -132,6 +134,7 @@ public class EspnLiveScoreBackgroundWorkerTests
             WinnerAbbr = "AME",
             HomeTeam = new Team { Abbreviation = "AME" },
             AwayTeam = new Team { Abbreviation = "CHI" },
+            DateUtc = DateTime.UtcNow,
             Active = true
         };
 
@@ -142,6 +145,7 @@ public class EspnLiveScoreBackgroundWorkerTests
             StatusState = "in",
             HomeTeam = new Team { Abbreviation = "CRU" },
             AwayTeam = new Team { Abbreviation = "PUM" },
+            DateUtc = DateTime.UtcNow,
             Active = true
         };
 
@@ -169,6 +173,8 @@ public class EspnLiveScoreBackgroundWorkerTests
         _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quiniela });
         _mockMembers.Setup(m => m.GetMembersAsync(50)).ReturnsAsync(new List<QuinielaMember> { member1, member2 });
         _mockPicks.Setup(p => p.GetAllPicksForWeekAsync(50, 100)).ReturnsAsync(new List<Pick> { hitPick, missPick });
+        _mockPushNotificationLogs.Setup(l => l.HasMatchFinishedBeenSentAsync(1001, 50, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
 
         // Act
         await worker.ProcessAutomationCycleAsync(
@@ -189,6 +195,60 @@ public class EspnLiveScoreBackgroundWorkerTests
             22,
             It.Is<PushNotificationPayload>(p => p.Title.Contains("Fallaste") && p.Message.Contains("AME 2 - 1 CHI")),
             default), Times.Once);
+
+        // Assert - Registro persistente en PushNotificationLogs
+        _mockPushNotificationLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log =>
+            log.NotificationType == "MATCH_FINISHED_1001" &&
+            log.QuinielaId == 50 &&
+            log.WeekId == 100)), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessAutomationCycle_WhenMatchAlreadyNotified_ShouldNotSendAgain()
+    {
+        // Arrange
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        var season = new Season { Id = 1, LeagueId = 10, Active = true };
+        var week = new Week { Id = 100, SeasonId = 1, WeekNumber = 5, Status = "LOCKED", Active = true };
+        var quiniela = new Quiniela { Id = 50, LeagueId = 10, Active = true };
+
+        var postMatch = new DbMatch
+        {
+            Id = 1001,
+            WeekId = 100,
+            StatusState = "post",
+            HomeScore = 2,
+            AwayScore = 1,
+            WinnerAbbr = "AME",
+            HomeTeam = new Team { Abbreviation = "AME" },
+            AwayTeam = new Team { Abbreviation = "CHI" },
+            DateUtc = DateTime.UtcNow,
+            Active = true
+        };
+
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week> { week });
+        _mockMatches.Setup(m => m.GetByWeekIdAsync(100)).ReturnsAsync(new List<DbMatch> { postMatch });
+        _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quiniela });
+
+        // Simular que el log ya existe (idempotencia)
+        _mockPushNotificationLogs.Setup(l => l.HasMatchFinishedBeenSentAsync(1001, 50, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Act
+        await worker.ProcessAutomationCycleAsync(
+            _mockUow.Object,
+            _mockEspnSync.Object,
+            _mockWebPush.Object,
+            _mockScoringApp.Object,
+            default);
+
+        // Assert - Ninguna notificación enviada
+        _mockWebPush.Verify(w => w.SendNotificationToUserAsync(
+            It.IsAny<int>(),
+            It.IsAny<PushNotificationPayload>(),
+            default), Times.Never);
     }
 
     [Fact]

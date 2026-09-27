@@ -26,6 +26,9 @@ EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 ENV DOTNET_RUNNING_IN_CONTAINER=true
 
+# Instalar tzdata para resolución nativa de zonas horarias en Linux (America/Mexico_City)
+RUN apk add --no-cache tzdata
+
 # Preparar directorio de almacenamiento de avatares con permisos adecuados
 RUN mkdir -p /app/uploads/avatars && chown -R $APP_UID /app/uploads
 

@@ -35,4 +35,15 @@ public class PushNotificationLogRepository : GenericRepository<PushNotificationL
             l.WeekId == weekId &&
             l.QuinielaId == quinielaId, ct);
     }
+
+    public async Task<bool> HasMatchFinishedBeenSentAsync(
+        int matchId,
+        int quinielaId,
+        CancellationToken ct = default)
+    {
+        var notificationType = $"MATCH_FINISHED_{matchId}";
+        return await _dbSet.AnyAsync(l =>
+            l.NotificationType == notificationType &&
+            l.QuinielaId == quinielaId, ct);
+    }
 }
