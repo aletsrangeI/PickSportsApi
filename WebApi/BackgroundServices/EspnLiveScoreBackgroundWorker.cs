@@ -18,6 +18,8 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IAppLogger<EspnLiveScoreBackgroundWorker> _logger;
 
+    public TimeSpan NextSuggestedDelay { get; internal set; } = TimeSpan.FromMinutes(15);
+
     public EspnLiveScoreBackgroundWorker(
         IServiceScopeFactory scopeFactory,
         IAppLogger<EspnLiveScoreBackgroundWorker> logger)
@@ -56,8 +58,8 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
                 _logger.LogError("[EspnLiveWorker] Error durante el ciclo de automatización: {0}\n{1}", ex.Message, ex.StackTrace ?? "");
             }
 
-            var nextDelay = hasActiveLiveMatches ? TimeSpan.FromMinutes(2) : TimeSpan.FromMinutes(15);
-            _logger.LogInformation("[EspnLiveWorker] Ciclo finalizado. Próximo sondeo en {0} minutos.", nextDelay.TotalMinutes);
+            var nextDelay = hasActiveLiveMatches ? TimeSpan.FromMinutes(2) : NextSuggestedDelay;
+            _logger.LogInformation("[EspnLiveWorker] Ciclo finalizado. Próximo sondeo en {0:N1} minutos.", nextDelay.TotalMinutes);
 
             await Task.Delay(nextDelay, stoppingToken);
         }
@@ -66,7 +68,7 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
     }
 
     /// <summary>
-    /// Ejecuta una iteración del ciclo de vida: bloqueo, sincronización, notificaciones y cierre de jornada.
+    /// Ejecuta una iteración del ciclo de vida: bloqueo, sincronización inteligente, notificaciones y cierre de jornada.
     /// Retorna true si hay partidos activos en juego (para usar sondeo rápido de 2 min).
     /// </summary>
     public async Task<bool> ProcessAutomationCycleAsync(
@@ -77,10 +79,16 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         CancellationToken ct)
     {
         var hasActiveMatches = false;
+        var allPendingMatches = new List<Match>();
+        var nowUtc = DateTime.UtcNow;
 
         // 1. Obtener temporadas activas
         var seasons = (await unitOfWork.Seasons.GetAllAsync()).Where(s => s.Active).ToList();
-        if (seasons.Count == 0) return false;
+        if (seasons.Count == 0)
+        {
+            NextSuggestedDelay = TimeSpan.FromHours(4);
+            return false;
+        }
 
         foreach (var season in seasons)
         {
@@ -93,14 +101,13 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
                 try
                 {
                     var matchesBefore = (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
-                    var matchesBeforeDict = matchesBefore.ToDictionary(m => m.Id);
 
                     // A. Verificar arranque del 1er partido (PUBLISHED -> LOCKED + Autofill)
                     var firstMatchDate = matchesBefore.OrderBy(m => m.DateUtc).FirstOrDefault()?.DateUtc;
                     var effectiveFirstGameUtc = week.FirstGameUtc ?? firstMatchDate;
 
                     var shouldLock = week.Status == "PUBLISHED" && (
-                        (effectiveFirstGameUtc.HasValue && DateTime.UtcNow >= effectiveFirstGameUtc.Value) ||
+                        (effectiveFirstGameUtc.HasValue && nowUtc >= effectiveFirstGameUtc.Value) ||
                         matchesBefore.Any(m => string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase) ||
                                                string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase))
                     );
@@ -110,71 +117,96 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
                         await LockWeekAndAutofillAsync(week, season, unitOfWork, webPush, ct);
                     }
 
-                    // B. Si la jornada está bloqueada o hay partidos en vivo hoy, sincronizar ESPN
-                    var hasMatchesToday = matchesBefore.Any(m => m.DateUtc.Date == DateTime.UtcNow.Date ||
-                                                                 string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase));
+                    // B. Sincronización inteligente con ESPN:
+                    // 1) Ventana activa de juego: partidos en vivo ("in") o que arrancan en <= 20 min o en curso (hasta 3.5h sin concluir)
+                    var isMatchWindowActive = matchesBefore.Any(m =>
+                        string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase) ||
+                        (!string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) &&
+                         !string.Equals(m.StatusState, "postponed", StringComparison.OrdinalIgnoreCase) &&
+                         nowUtc >= m.DateUtc.AddMinutes(-20) &&
+                         nowUtc <= m.DateUtc.AddHours(3.5))
+                    );
 
-                    if (week.Status == "LOCKED" || hasMatchesToday)
+                    // 2) Sincronización de mantenimiento fuera de ventana: máximo 2-3 veces al día (cada 6+ horas)
+                    var oldestSync = matchesBefore.Any() ? matchesBefore.Min(m => m.LastSyncUtc) : DateTime.MinValue;
+                    var isMaintenanceSyncDue = (nowUtc - oldestSync) >= TimeSpan.FromHours(6);
+
+                    var shouldSyncWithEspn = isMatchWindowActive || isMaintenanceSyncDue;
+
+                    if (shouldSyncWithEspn)
                     {
-                        _logger.LogInformation("[EspnLiveWorker] Sincronizando jornada {0} (ID={1}) desde ESPN...", week.WeekNumber, week.Id);
+                        _logger.LogInformation("[EspnLiveWorker] Sincronizando jornada {0} (ID={1}) desde ESPN (VentanaActiva={2}, Mantenimiento={3})...",
+                            week.WeekNumber, week.Id, isMatchWindowActive, isMaintenanceSyncDue);
                         await espnSync.SyncWeekAsync(week.Id, ct);
-
-                        // Re-leer partidos después del sync
-                        var matchesAfter = (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
-
-                        // Detectar si hay partidos actualmente en juego o en ventana de juego activa
-                        var hasLiveOrImminent = matchesAfter.Any(m =>
-                            string.Equals(m.StatusState, "in", StringComparison.OrdinalIgnoreCase) ||
-                            (string.Equals(m.StatusState, "pre", StringComparison.OrdinalIgnoreCase) &&
-                             DateTime.UtcNow >= m.DateUtc.AddMinutes(-20) &&
-                             DateTime.UtcNow <= m.DateUtc.AddHours(3))
-                        );
-
-                        if (!hasLiveOrImminent && week.Status == "LOCKED")
-                        {
-                            var hasPendingSoon = matchesAfter.Any(m =>
-                                !string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) &&
-                                !string.Equals(m.StatusState, "postponed", StringComparison.OrdinalIgnoreCase) &&
-                                (m.DateUtc.Date == DateTime.UtcNow.Date || m.DateUtc <= DateTime.UtcNow.AddHours(4))
-                            );
-                            if (hasPendingSoon)
-                            {
-                                hasLiveOrImminent = true;
-                            }
-                        }
-
-                        if (hasLiveOrImminent)
-                        {
-                            hasActiveMatches = true;
-                        }
-
-                        // C. Detectar partidos concluidos (StatusState == "post") y notificar de forma idempotente vía logs persistentes
-                        var finishedMatches = matchesAfter.Where(m =>
-                            string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase)
-                        ).ToList();
-
-                        if (finishedMatches.Count > 0)
-                        {
-                            await NotifyFinishedMatchesAsync(finishedMatches, week, season, unitOfWork, webPush, ct);
-                        }
-
-                        // D. Verificar si la jornada concluyó por completo (todos los partidos en "post" o "postponed")
-                        var allFinished = matchesAfter.Count > 0 && matchesAfter.All(m =>
-                            string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(m.StatusState, "postponed", StringComparison.OrdinalIgnoreCase)
-                        );
-
-                        if (allFinished && week.Status == "LOCKED")
-                        {
-                            await CloseAndScoreWeekAsync(week, season, unitOfWork, scoringApp, webPush, ct);
-                        }
                     }
+
+                    // Trabajar con el estado más actualizado de los partidos
+                    var matchesCurrent = shouldSyncWithEspn
+                        ? (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList()
+                        : matchesBefore;
+
+                    if (isMatchWindowActive)
+                    {
+                        hasActiveMatches = true;
+                    }
+
+                    // C. Detectar partidos concluidos (StatusState == "post") y notificar de forma idempotente vía logs persistentes
+                    var finishedMatches = matchesCurrent.Where(m =>
+                        string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase)
+                    ).ToList();
+
+                    if (finishedMatches.Count > 0)
+                    {
+                        await NotifyFinishedMatchesAsync(finishedMatches, week, season, unitOfWork, webPush, ct);
+                    }
+
+                    // D. Verificar si la jornada concluyó por completo (todos los partidos en "post" o "postponed")
+                    var allFinished = matchesCurrent.Count > 0 && matchesCurrent.All(m =>
+                        string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(m.StatusState, "postponed", StringComparison.OrdinalIgnoreCase)
+                    );
+
+                    if (allFinished && week.Status == "LOCKED")
+                    {
+                        await CloseAndScoreWeekAsync(week, season, unitOfWork, scoringApp, webPush, ct);
+                    }
+
+                    // Coleccionar partidos pendientes para calcular el tiempo óptimo de sueño
+                    allPendingMatches.AddRange(matchesCurrent.Where(m =>
+                        !string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(m.StatusState, "postponed", StringComparison.OrdinalIgnoreCase)
+                    ));
                 }
                 catch (Exception weekEx)
                 {
                     _logger.LogError("[EspnLiveWorker] Error procesando jornada {0} (ID={1}): {2}", week.WeekNumber, week.Id, weekEx.Message);
                 }
             }
+        }
+
+        // 2. Calcular retardo óptimo para el siguiente ciclo cuando no hay partidos en juego
+        if (allPendingMatches.Count > 0)
+        {
+            var nextMatch = allPendingMatches.OrderBy(m => m.DateUtc).First();
+            var timeUntilKickoff = nextMatch.DateUtc - nowUtc;
+
+            if (timeUntilKickoff <= TimeSpan.FromMinutes(20))
+            {
+                NextSuggestedDelay = TimeSpan.FromMinutes(2);
+            }
+            else if (timeUntilKickoff <= TimeSpan.FromHours(2))
+            {
+                var delay = timeUntilKickoff - TimeSpan.FromMinutes(20);
+                NextSuggestedDelay = delay < TimeSpan.FromMinutes(2) ? TimeSpan.FromMinutes(2) : delay;
+            }
+            else
+            {
+                NextSuggestedDelay = TimeSpan.FromHours(2);
+            }
+        }
+        else
+        {
+            NextSuggestedDelay = TimeSpan.FromHours(3);
         }
 
         return hasActiveMatches;
