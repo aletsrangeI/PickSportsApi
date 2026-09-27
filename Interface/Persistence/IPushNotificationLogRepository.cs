@@ -16,4 +16,9 @@ public interface IPushNotificationLogRepository : IGenericRepository<PushNotific
         int weekId,
         int quinielaId,
         CancellationToken ct = default);
+
+    Task<bool> HasMatchFinishedBeenSentAsync(
+        int matchId,
+        int quinielaId,
+        CancellationToken ct = default);
 }

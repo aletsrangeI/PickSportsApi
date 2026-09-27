@@ -148,17 +148,14 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
                             hasActiveMatches = true;
                         }
 
-                        // C. Detectar partidos que recién finalizaron (StatusState cambió a "post")
-                        var newlyFinished = matchesAfter.Where(m =>
-                            string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) &&
-                            (!matchesBeforeDict.TryGetValue(m.Id, out var before) ||
-                             !string.Equals(before.StatusState, "post", StringComparison.OrdinalIgnoreCase))
+                        // C. Detectar partidos concluidos (StatusState == "post") y notificar de forma idempotente vía logs persistentes
+                        var finishedMatches = matchesAfter.Where(m =>
+                            string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase)
                         ).ToList();
 
-                        if (newlyFinished.Count > 0)
+                        if (finishedMatches.Count > 0)
                         {
-                            _logger.LogInformation("[EspnLiveWorker] Se detectaron {0} partidos recién concluidos en jornada {1}.", newlyFinished.Count, week.WeekNumber);
-                            await NotifyFinishedMatchesAsync(newlyFinished, week, season, unitOfWork, webPush, ct);
+                            await NotifyFinishedMatchesAsync(finishedMatches, week, season, unitOfWork, webPush, ct);
                         }
 
                         // D. Verificar si la jornada concluyó por completo (todos los partidos en "post" o "postponed")
@@ -270,7 +267,7 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
     }
 
     private async Task NotifyFinishedMatchesAsync(
-        List<Match> newlyFinishedMatches,
+        List<Match> finishedMatches,
         Week week,
         Season season,
         IUnitOfWork unitOfWork,
@@ -278,8 +275,9 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         CancellationToken ct)
     {
         var quinielas = (await unitOfWork.Quinielas.GetByLeagueIdAsync(season.LeagueId)).Where(q => q.IsActive).ToList();
+        var todayLocalStr = DateTime.UtcNow.AddHours(-6).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
-        foreach (var match in newlyFinishedMatches)
+        foreach (var match in finishedMatches)
         {
             var homeAbbr = match.HomeTeam?.Abbreviation ?? "LOC";
             var awayAbbr = match.AwayTeam?.Abbreviation ?? "VIS";
@@ -291,10 +289,36 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
 
             foreach (var quiniela in quinielas)
             {
+                // Idempotencia: Verificar si ya se notificó este partido para esta quiniela
+                var alreadySent = await unitOfWork.PushNotificationLogs.HasMatchFinishedBeenSentAsync(match.Id, quiniela.Id, ct);
+                if (alreadySent) continue;
+
+                // Ventana de seguridad: Si el partido concluyó hace más de 12 horas, registrar log sin despachar push para evitar spam
+                if (match.DateUtc < DateTime.UtcNow.AddHours(-12))
+                {
+                    await unitOfWork.PushNotificationLogs.InsertAsync(new PushNotificationLog
+                    {
+                        NotificationType = $"MATCH_FINISHED_{match.Id}",
+                        WeekId = week.Id,
+                        QuinielaId = quiniela.Id,
+                        UserId = null,
+                        DateLocal = todayLocalStr,
+                        Title = $"Resultado en {quiniela.Name}: {scoreDesc}",
+                        Message = $"Partido {homeAbbr} vs {awayAbbr} finalizado ({scoreDesc})",
+                        DeliveredCount = 0,
+                        SentAtUtc = DateTime.UtcNow,
+                        Active = true
+                    });
+                    await unitOfWork.Save(ct);
+                    continue;
+                }
+
                 var members = (await unitOfWork.QuinielaMembers.GetMembersAsync(quiniela.Id)).ToDictionary(m => m.Id);
                 var picks = (await unitOfWork.Picks.GetAllPicksForWeekAsync(quiniela.Id, week.Id))
                     .Where(p => p.MatchId == match.Id)
                     .ToList();
+
+                var deliveredTotal = 0;
 
                 foreach (var pick in picks)
                 {
@@ -302,22 +326,22 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
 
                     var isHit = string.Equals(pick.PickAbbr, winnerAbbr, StringComparison.OrdinalIgnoreCase);
 
-                    // Formateo según Escenario 2 de SPEC-006:
-                    // A quien acertó: "🎉 ¡Acertaste tu pick! América 2 - 1 Chivas."
-                    // A quien falló:   "❌ Fallaste tu pick. Ganó América 2 - 1." (o marcador)
+                    // Formateo según SPEC-006 indicando claramente la quiniela y puntuación correcta:
+                    // A quien acertó: "🎉 ¡Acertaste en {quiniela.Name}!" -> "¡Excelente pronóstico! América 2 - 1 Chivas."
+                    // A quien falló:   "❌ Fallaste en {quiniela.Name}" -> "Ganó América: América 2 - 1 Chivas." o "Empate: ..."
                     string title;
                     string message;
 
                     if (isHit)
                     {
-                        title = "🎉 ¡Acertaste tu pick!";
+                        title = $"🎉 ¡Acertaste en {quiniela.Name}!";
                         message = $"¡Excelente pronóstico! {scoreDesc}.";
                     }
                     else
                     {
-                        title = "❌ Fallaste tu pick";
+                        title = $"❌ Fallaste en {quiniela.Name}";
                         var winnerText = winnerAbbr == "EMPATE" ? "Empate" : $"Ganó {winnerAbbr}";
-                        message = $"{winnerText} {scoreDesc}.";
+                        message = $"{winnerText}: {scoreDesc}.";
                     }
 
                     var payload = new PushNotificationPayload(
@@ -328,14 +352,36 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
                         {
                             type = "match_finished",
                             matchId = match.Id,
+                            quinielaId = quiniela.Id,
                             isHit,
                             winner = winnerAbbr,
                             score = scoreDesc
                         }
                     );
 
-                    await webPush.SendNotificationToUserAsync(member.UserId, payload, ct);
+                    var sent = await webPush.SendNotificationToUserAsync(member.UserId, payload, ct);
+                    deliveredTotal += sent;
                 }
+
+                // Registrar en PushNotificationLogs para garantizar idempotencia persistente ante reinicios o syncs
+                await unitOfWork.PushNotificationLogs.InsertAsync(new PushNotificationLog
+                {
+                    NotificationType = $"MATCH_FINISHED_{match.Id}",
+                    WeekId = week.Id,
+                    QuinielaId = quiniela.Id,
+                    UserId = null,
+                    DateLocal = todayLocalStr,
+                    Title = $"Resultado en {quiniela.Name}: {scoreDesc}",
+                    Message = $"Partido {homeAbbr} vs {awayAbbr} finalizado ({scoreDesc})",
+                    DeliveredCount = deliveredTotal,
+                    SentAtUtc = DateTime.UtcNow,
+                    Active = true
+                });
+
+                await unitOfWork.Save(ct);
+
+                _logger.LogInformation("[EspnLiveWorker] Notificaciones de partido finalizado enviadas para Match ID={0} ({1}) en Quiniela '{2}' ({3} entregados).",
+                    match.Id, scoreDesc, quiniela.Name, deliveredTotal);
             }
         }
     }
@@ -373,7 +419,7 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
             }
             else
             {
-                _logger.LogWarning("[EspnLiveWorker] Quiniela {0}: No se pudo calificar automáticamente: {1}", quiniela.Name, scoreResult.Message);
+                _logger.LogWarning("[EspnLiveWorker] Quiniela {0}: No se pudo calificar automáticamente: {1}", quiniela.Name, scoreResult?.Message ?? "Error desconocido");
             }
         }
 
