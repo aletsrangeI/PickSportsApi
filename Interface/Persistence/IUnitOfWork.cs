@@ -23,6 +23,7 @@ public interface IUnitOfWork : IDisposable
     ICatalogoRepository Catalogos { get; }
     IContenidoCatalogoRepository ContenidoCatalogos { get; }
     IFormFieldRepository FormFields { get; }
+    IUserAvatarFileRepository UserAvatarFiles { get; }
 
     Task<int> Save(CancellationToken cancellationToken = default);
     Task BeginTransactionAsync(CancellationToken cancellationToken = default);

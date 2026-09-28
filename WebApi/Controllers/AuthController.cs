@@ -191,9 +191,9 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     [HttpGet("avatar/{fileName}")]
     [ResponseCache(Duration = 86400, Location = ResponseCacheLocation.Any)]
-    public IActionResult GetAvatar(string fileName)
+    public async Task<IActionResult> GetAvatar(string fileName)
     {
-        var filePath = _avatarStorageService.GetAvatarFilePath(fileName);
+        var filePath = await _avatarStorageService.GetAvatarFilePathAsync(fileName, HttpContext.RequestAborted);
         if (filePath == null)
         {
             return NotFound(new { message = "Avatar no encontrado." });

@@ -45,6 +45,7 @@ public class ApplicationDbContext : DbContext
 
     // System Settings & Versioning
     public DbSet<SystemConfig> SystemConfigs { get; set; }
+    public DbSet<UserAvatarFile> UserAvatarFiles { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

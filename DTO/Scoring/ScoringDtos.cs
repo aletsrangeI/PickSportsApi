@@ -34,6 +34,17 @@ public class QuinielaStandingsResponseDto
     public List<MemberStandingDto> GeneralStandings { get; set; } = new();
 }
 
+public class AwardMatchDetailDto
+{
+    public int MatchId { get; set; }
+    public string MatchTitle { get; set; } = string.Empty;
+    public string TeamsAbbr { get; set; } = string.Empty;
+    public string Score { get; set; } = string.Empty;
+    public string PickAbbr { get; set; } = string.Empty;
+    public string DetailText { get; set; } = string.Empty;
+    public string ContextText { get; set; } = string.Empty;
+}
+
 public class WeeklyAwardDto
 {
     public int Id { get; set; }
@@ -47,6 +58,7 @@ public class WeeklyAwardDto
     public string AwardValue1 { get; set; } = string.Empty;
     public string? AwardValue2 { get; set; }
     public string? Notes { get; set; }
+    public List<AwardMatchDetailDto> MatchDetails { get; set; } = new();
 }
 
 public class ScoreWeekResultDto
