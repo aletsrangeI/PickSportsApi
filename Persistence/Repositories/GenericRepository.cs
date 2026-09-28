@@ -100,12 +100,22 @@ public class GenericRepository<T> : IGenericRepository<T> where T : class
             if (keyProperty != null)
             {
                 var keyValue = keyProperty.PropertyInfo?.GetValue(entity);
-                var tracked = _context.ChangeTracker.Entries<T>()
-                    .FirstOrDefault(e => keyProperty.PropertyInfo?.GetValue(e.Entity)?.Equals(keyValue) == true);
-                if (tracked != null)
+                if (keyValue != null)
                 {
-                    tracked.CurrentValues.SetValues(entity);
-                    return await _context.SaveChangesAsync() > 0;
+                    var tracked = _context.ChangeTracker.Entries<T>()
+                        .FirstOrDefault(e => keyProperty.PropertyInfo?.GetValue(e.Entity)?.Equals(keyValue) == true);
+                    if (tracked != null)
+                    {
+                        tracked.CurrentValues.SetValues(entity);
+                        return await _context.SaveChangesAsync() > 0;
+                    }
+
+                    var existing = await _dbSet.FindAsync(keyValue);
+                    if (existing != null)
+                    {
+                        _context.Entry(existing).CurrentValues.SetValues(entity);
+                        return await _context.SaveChangesAsync() > 0;
+                    }
                 }
             }
             _dbSet.Update(entity);
