@@ -3,6 +3,8 @@ namespace DTO.Scoring;
 public class MemberStandingDto
 {
     public int Rank { get; set; }
+    public int? PreviousRank { get; set; }
+    public int? RankDelta { get; set; }
     public int MemberId { get; set; }
     public int UserId { get; set; }
     public string Alias { get; set; } = string.Empty;

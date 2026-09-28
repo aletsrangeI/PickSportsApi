@@ -53,8 +53,11 @@ public class ScoringApplication : IScoringApplication
         var weeklyStandings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches);
 
         // 2. Tabla General Acumulada
-        var picksByMember = allHistoricalPicks
-            .Where(p => p.IsHit.HasValue)
+        var currentPicks = allHistoricalPicks
+            .Where(p => p.IsHit.HasValue && p.Match?.Week?.WeekNumber <= week.WeekNumber)
+            .ToList();
+
+        var picksByMember = currentPicks
             .GroupBy(p => p.MemberId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -103,6 +106,23 @@ public class ScoringApplication : IScoringApplication
             sortedGeneral[i].Rank = i + 1;
         }
 
+        if (week.WeekNumber > 1)
+        {
+            var previousPicks = allHistoricalPicks
+                .Where(p => p.IsHit.HasValue && p.Match?.Week?.WeekNumber < week.WeekNumber)
+                .ToList();
+
+            var previousRanks = CalculateGeneralRanks(members, previousPicks);
+            foreach (var standing in sortedGeneral)
+            {
+                if (previousRanks.TryGetValue(standing.MemberId, out var previousRank))
+                {
+                    standing.PreviousRank = previousRank;
+                    standing.RankDelta = previousRank - standing.Rank;
+                }
+            }
+        }
+
         var finishedMatchesCount = matches.Count(m => string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase));
 
         response.isSuccess = true;
@@ -121,6 +141,33 @@ public class ScoringApplication : IScoringApplication
         };
 
         return response;
+    }
+
+    private static Dictionary<int, int> CalculateGeneralRanks(
+        IEnumerable<QuinielaMember> members,
+        IEnumerable<Pick> picks)
+    {
+        var standings = members.Select(member =>
+        {
+            var memberPicks = picks.Where(p => p.MemberId == member.Id).ToList();
+            return new
+            {
+                member.Id,
+                member.Alias,
+                Hits = memberPicks.Count(p => p.IsHit == true),
+                UpsetHits = memberPicks.Count(p => p.IsUpsetHit),
+                Humillaciones = memberPicks.Count(p => p.IsHumillacion)
+            };
+        })
+        .OrderByDescending(s => s.Hits)
+        .ThenByDescending(s => s.UpsetHits)
+        .ThenBy(s => s.Humillaciones)
+        .ThenBy(s => s.Alias)
+        .ToList();
+
+        return standings
+            .Select((standing, index) => new { standing.Id, Rank = index + 1 })
+            .ToDictionary(s => s.Id, s => s.Rank);
     }
 
     public async Task<Response<ScoreWeekResultDto>> ScoreWeekAsync(int quinielaId, int weekId, int userId)
