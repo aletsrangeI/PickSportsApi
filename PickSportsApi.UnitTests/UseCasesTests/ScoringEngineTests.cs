@@ -139,7 +139,9 @@ public class ScoringEngineTests
             HomeScore = 0,
             AwayScore = 0,
             WinnerAbbr = "EMPATE",
-            StatusState = "post"
+            StatusState = "post",
+            HomeTeam = new Team { Abbreviation = "TIG" },
+            AwayTeam = new Team { Abbreviation = "LEO" }
         };
 
         // Partido con sorpresa: solo 1 de 10 participantes acertó visita
@@ -149,20 +151,35 @@ public class ScoringEngineTests
             HomeScore = 0,
             AwayScore = 3, // Diferencia de 3 goles
             WinnerAbbr = "MAZ",
-            StatusState = "post"
+            StatusState = "post",
+            HomeTeam = new Team { Abbreviation = "AME" },
+            AwayTeam = new Team { Abbreviation = "MAZ" }
         };
 
-        var matches = new List<Match> { match00, matchUpset };
+        var matchDrawFailed = new Match
+        {
+            Id = 3,
+            HomeScore = 2,
+            AwayScore = 1,
+            WinnerAbbr = "TIG",
+            StatusState = "post",
+            HomeTeam = new Team { Abbreviation = "TIG" },
+            AwayTeam = new Team { Abbreviation = "LEO" }
+        };
+
+        var matches = new List<Match> { match00, matchUpset, matchDrawFailed };
 
         // Participante 1: apostó local en el 0-0 (Somnífero) y apostó local en la goleada 0-3 (Humillación)
         var p1Pick1 = new Pick { MatchId = 1, MemberId = 1, PickAbbr = "TIG" };
         var p1Pick2 = new Pick { MatchId = 2, MemberId = 1, PickAbbr = "AME" };
+        var p1Pick3 = new Pick { MatchId = 3, MemberId = 1, PickAbbr = "EMPATE" };
 
         // Participante 2: apostó MAZ en la sorpresa (Upset hit)
         var p2Pick1 = new Pick { MatchId = 1, MemberId = 2, PickAbbr = "EMPATE" };
         var p2Pick2 = new Pick { MatchId = 2, MemberId = 2, PickAbbr = "MAZ" };
+        var p2Pick3 = new Pick { MatchId = 3, MemberId = 2, PickAbbr = "TIG" };
 
-        var picks = new List<Pick> { p1Pick1, p1Pick2, p2Pick1, p2Pick2 };
+        var picks = new List<Pick> { p1Pick1, p1Pick2, p1Pick3, p2Pick1, p2Pick2, p2Pick3 };
 
         // WHEN: Se evalúan los picks con un grupo de 10 miembros
         _engine.EvaluatePicksAndMatches(matches, picks, totalQuinielaMembers: 10);
@@ -170,6 +187,7 @@ public class ScoringEngineTests
         // THEN: P1 tiene somnífero y humillación
         Assert.True(p1Pick1.IsSomnifero);
         Assert.True(p1Pick2.IsHumillacion);
+        Assert.True(p1Pick3.IsEmpateFallido);
 
         // P2 tiene acierto de sorpresa
         Assert.True(p2Pick2.IsUpsetHit);
@@ -186,6 +204,13 @@ public class ScoringEngineTests
         Assert.Contains(awards, a => a.AwardType == "SOMNIFERO" && a.MemberId == 1);
         Assert.Contains(awards, a => a.AwardType == "HUMILLADO" && a.MemberId == 1);
         Assert.Contains(awards, a => a.AwardType == "REY_SORPRESAS" && a.MemberId == 2);
+        Assert.Contains(awards, a => a.AwardType == "EMPATE_FALLIDO" && a.MemberId == 1);
+        Assert.Contains(awards, a => a.AwardType == "SOMNIFERO" && a.Notes!.Contains("TIG 0-0 LEO (pronóstico TIG)"));
+        Assert.Contains(awards, a => a.AwardType == "HUMILLADO" && a.Notes!.Contains("AME 0-3 MAZ (pronóstico AME)"));
+        Assert.Contains(awards, a => a.AwardType == "REY_SORPRESAS" && a.Notes!.Contains("AME 0-3 MAZ (pronóstico MAZ)"));
+        Assert.Contains(awards, a => a.AwardType == "EMPATE_FALLIDO" && a.Notes!.Contains("TIG 2-1 LEO (pronóstico EMPATE)"));
+        Assert.All(awards.Where(a => a.AwardType is "REY_SORPRESAS" or "HUMILLADO" or "SOMNIFERO" or "EMPATE_FALLIDO"),
+            award => Assert.True(award.Notes!.Length <= 500));
     }
 
     [Fact]
@@ -335,4 +360,3 @@ public class ScoringEngineTests
         Assert.Equal(2, standings[1].Rank);
     }
 }
-

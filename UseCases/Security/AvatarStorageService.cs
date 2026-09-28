@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using Domain.Entities;
+using Interface.Persistence;
 using Interface.UseCases;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -23,10 +25,15 @@ public class AvatarStorageService : IAvatarStorageService
 
     private readonly string _storageDir;
     private readonly ILogger<AvatarStorageService> _logger;
+    private readonly IUnitOfWork? _unitOfWork;
 
-    public AvatarStorageService(IConfiguration configuration, ILogger<AvatarStorageService> logger)
+    public AvatarStorageService(
+        IConfiguration configuration,
+        ILogger<AvatarStorageService> logger,
+        IUnitOfWork? unitOfWork = null)
     {
         _logger = logger;
+        _unitOfWork = unitOfWork;
 
         var configuredPath = configuration["AvatarStorage:Path"];
         if (!string.IsNullOrWhiteSpace(configuredPath))
@@ -140,11 +147,51 @@ public class AvatarStorageService : IAvatarStorageService
         var safeFileName = $"avatar_u{userId}_{Guid.NewGuid():N}{ext}";
         var fullPath = Path.Combine(_storageDir, safeFileName);
 
-        // Guardar archivo escribiendo cabecera leída y el resto del stream
-        await using (var outputStream = new FileStream(fullPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
+        // Copiar el archivo completo a memoria para guardar en disco Y en base de datos PostgreSQL
+        byte[] fileBytes;
+        await using (var ms = new MemoryStream())
         {
-            await outputStream.WriteAsync(header, 0, bytesRead, cancellationToken);
-            await fileStream.CopyToAsync(outputStream, cancellationToken);
+            await ms.WriteAsync(header.AsMemory(0, bytesRead), cancellationToken);
+            await fileStream.CopyToAsync(ms, cancellationToken);
+            fileBytes = ms.ToArray();
+        }
+
+        // 1. Guardar en disco local para acceso ultrarrápido
+        await File.WriteAllBytesAsync(fullPath, fileBytes, cancellationToken);
+
+        // 2. Persistir en PostgreSQL para que NUNCA se pierda por despliegues Docker, reinicios o limpiezas
+        if (_unitOfWork != null)
+        {
+            try
+            {
+                var existing = await _unitOfWork.UserAvatarFiles.GetByUserIdAsync(userId, cancellationToken);
+                var resolvedContentType = string.IsNullOrWhiteSpace(contentType) ? GetContentType(safeFileName) : contentType;
+
+                if (existing != null)
+                {
+                    existing.FileName = safeFileName;
+                    existing.ContentType = resolvedContentType;
+                    existing.Data = fileBytes;
+                    existing.CreatedAt = DateTime.UtcNow;
+                    await _unitOfWork.UserAvatarFiles.UpdateAsync(existing);
+                }
+                else
+                {
+                    await _unitOfWork.UserAvatarFiles.InsertAsync(new UserAvatarFile
+                    {
+                        UserId = userId,
+                        FileName = safeFileName,
+                        ContentType = resolvedContentType,
+                        Data = fileBytes,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+                _logger.LogInformation("Avatar persistido en base de datos PostgreSQL para usuario {UserId} ({FileName})", userId, safeFileName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudo persistir avatar en PostgreSQL para usuario {UserId}", userId);
+            }
         }
 
         _logger.LogInformation("Avatar guardado para usuario {UserId} en {Path}", userId, fullPath);
@@ -153,9 +200,9 @@ public class AvatarStorageService : IAvatarStorageService
         return $"/api/auth/avatar/{safeFileName}";
     }
 
-    public Task DeleteAvatarAsync(string? avatarUrl, CancellationToken cancellationToken = default)
+    public async Task DeleteAvatarAsync(string? avatarUrl, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(avatarUrl)) return Task.CompletedTask;
+        if (string.IsNullOrWhiteSpace(avatarUrl)) return;
 
         try
         {
@@ -164,11 +211,20 @@ public class AvatarStorageService : IAvatarStorageService
             if (idx >= 0)
             {
                 var fileName = avatarUrl.Substring(idx + prefix.Length).Trim();
-                var filePath = GetAvatarFilePath(fileName);
-                if (filePath != null && File.Exists(filePath))
+                if (Regex.IsMatch(fileName, @"^[a-zA-Z0-9_\-\.]+$") && !fileName.Contains(".."))
                 {
-                    File.Delete(filePath);
-                    _logger.LogInformation("Avatar anterior eliminado: {FilePath}", filePath);
+                    var fullPath = Path.Combine(_storageDir, fileName);
+                    if (File.Exists(fullPath))
+                    {
+                        File.Delete(fullPath);
+                        _logger.LogInformation("Avatar anterior eliminado de disco: {FilePath}", fullPath);
+                    }
+
+                    if (_unitOfWork != null)
+                    {
+                        await _unitOfWork.UserAvatarFiles.DeleteByFileNameAsync(fileName, cancellationToken);
+                        _logger.LogInformation("Avatar anterior {FileName} eliminado de PostgreSQL", fileName);
+                    }
                 }
             }
         }
@@ -176,11 +232,9 @@ public class AvatarStorageService : IAvatarStorageService
         {
             _logger.LogWarning(ex, "Error al intentar eliminar avatar anterior en {AvatarUrl}", avatarUrl);
         }
-
-        return Task.CompletedTask;
     }
 
-    public string? GetAvatarFilePath(string fileName)
+    public async Task<string?> GetAvatarFilePathAsync(string fileName, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(fileName)) return null;
 
@@ -198,7 +252,42 @@ public class AvatarStorageService : IAvatarStorageService
             return null;
         }
 
-        return File.Exists(fullPath) ? fullPath : null;
+        // Si ya existe en disco (caché local), servirlo directamente
+        if (File.Exists(fullPath))
+        {
+            return fullPath;
+        }
+
+        // Si no está en disco local, restaurar desde la base de datos PostgreSQL
+        if (_unitOfWork != null)
+        {
+            try
+            {
+                var record = await _unitOfWork.UserAvatarFiles.GetByFileNameAsync(fileName, cancellationToken);
+                if (record != null && record.Data.Length > 0)
+                {
+                    if (!Directory.Exists(_storageDir))
+                    {
+                        Directory.CreateDirectory(_storageDir);
+                    }
+
+                    await File.WriteAllBytesAsync(fullPath, record.Data, cancellationToken);
+                    _logger.LogInformation("Avatar {FileName} restaurado exitosamente en caché de disco desde PostgreSQL", fileName);
+                    return fullPath;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error al intentar restaurar avatar {FileName} desde PostgreSQL", fileName);
+            }
+        }
+
+        return null;
+    }
+
+    public string? GetAvatarFilePath(string fileName)
+    {
+        return GetAvatarFilePathAsync(fileName).GetAwaiter().GetResult();
     }
 
     public string GetContentType(string fileName)

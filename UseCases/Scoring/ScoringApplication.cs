@@ -304,20 +304,70 @@ public class ScoringApplication : IScoringApplication
             awards = await _unitOfWork.WeeklyAwards.GetAllAwardsForQuinielaAsync(quinielaId);
         }
 
-        var dtos = awards.Select(a => new WeeklyAwardDto
+        var awardsList = awards.ToList();
+        var dtos = new List<WeeklyAwardDto>();
+
+        if (awardsList.Any())
         {
-            Id = a.Id,
-            QuinielaId = a.QuinielaId,
-            WeekId = a.WeekId,
-            MemberId = a.MemberId,
-            MemberAlias = a.Member?.Alias ?? "Anónimo",
-            DisplayName = a.Member?.User?.DisplayName ?? a.Member?.Alias,
-            AvatarUrl = a.Member?.User?.AvatarUrl,
-            AwardType = a.AwardType,
-            AwardValue1 = a.AwardValue1,
-            AwardValue2 = a.AwardValue2,
-            Notes = a.Notes
-        }).ToList();
+            var members = (await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId)).ToList();
+            int totalMembers = members.Count;
+            var weekGroups = awardsList.GroupBy(a => a.WeekId);
+
+            foreach (var group in weekGroups)
+            {
+                int wId = group.Key;
+                var weekMatches = (await _unitOfWork.Matches.GetByWeekIdAsync(wId)).ToList();
+                var weekPicks = (await _unitOfWork.Picks.GetAllPicksForWeekAsync(quinielaId, wId)).ToList();
+
+                _scoringEngine.EvaluatePicksAndMatches(weekMatches, weekPicks, totalMembers);
+
+                foreach (var a in group)
+                {
+                    var matchDetails = ScoringEngine.GetAwardTriggerDetails(
+                        a.AwardType,
+                        a.MemberId,
+                        weekMatches,
+                        weekPicks,
+                        totalMembers);
+
+                    string notes = a.Notes ?? string.Empty;
+
+                    // Si no tiene detalle enriquecido o es la nota antigua básica
+                    if (matchDetails.Any() && (string.IsNullOrWhiteSpace(notes) || !notes.Contains(". Partidos:")))
+                    {
+                        int awardVal = int.TryParse(a.AwardValue1, out var parsedVal) ? parsedVal : matchDetails.Count;
+                        notes = ScoringEngine.FormatEnrichedNotes(
+                            a.AwardType,
+                            a.Member?.Alias ?? "Participante",
+                            awardVal,
+                            matchDetails,
+                            ScoringEngine.GetBaseNoteTemplate(a.AwardType));
+
+                        if (a.Notes != notes)
+                        {
+                            a.Notes = notes;
+                            await _unitOfWork.WeeklyAwards.UpdateAsync(a);
+                        }
+                    }
+
+                    dtos.Add(new WeeklyAwardDto
+                    {
+                        Id = a.Id,
+                        QuinielaId = a.QuinielaId,
+                        WeekId = a.WeekId,
+                        MemberId = a.MemberId,
+                        MemberAlias = a.Member?.Alias ?? "Anónimo",
+                        DisplayName = a.Member?.User?.DisplayName ?? a.Member?.Alias,
+                        AvatarUrl = a.Member?.User?.AvatarUrl,
+                        AwardType = a.AwardType,
+                        AwardValue1 = a.AwardValue1,
+                        AwardValue2 = a.AwardValue2,
+                        Notes = notes,
+                        MatchDetails = matchDetails
+                    });
+                }
+            }
+        }
 
         response.isSuccess = true;
         response.Message = "Galardones obtenidos.";

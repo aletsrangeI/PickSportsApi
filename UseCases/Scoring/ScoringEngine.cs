@@ -268,6 +268,9 @@ public class ScoringEngine
         var awards = new List<WeeklyAward>();
         if (!sortedWeeklyStandings.Any()) return awards;
 
+        var picksList = weekPicks.ToList();
+        var matchesById = weekMatches.ToDictionary(m => m.Id);
+
         // 1. MVP: El 1er lugar de la jornada (siempre que tenga al menos 1 acierto)
         var top = sortedWeeklyStandings.First();
         if (top.Hits > 0)
@@ -285,7 +288,12 @@ public class ScoringEngine
         }
 
         // Helper para métricas grupales donde puede haber múltiples ganadores o ninguno si max es 0
-        void AddMaxAward(string awardType, Func<MemberStandingDto, int> selector, string value2, string noteTemplate)
+        void AddMaxAward(
+            string awardType,
+            Func<MemberStandingDto, int> selector,
+            string value2,
+            string noteTemplate,
+            Func<Pick, bool> triggeringPick)
         {
             int maxVal = sortedWeeklyStandings.Max(selector);
             if (maxVal > 0)
@@ -293,6 +301,9 @@ public class ScoringEngine
                 var winners = sortedWeeklyStandings.Where(s => selector(s) == maxVal).ToList();
                 foreach (var winner in winners)
                 {
+                    var details = GetAwardTriggerDetails(awardType, winner.MemberId, weekMatches, weekPicks, sortedWeeklyStandings.Count);
+                    string notes = FormatEnrichedNotes(awardType, winner.Alias, maxVal, details, noteTemplate);
+
                     awards.Add(new WeeklyAward
                     {
                         QuinielaId = quinielaId,
@@ -301,23 +312,23 @@ public class ScoringEngine
                         AwardType = awardType,
                         AwardValue1 = maxVal.ToString(),
                         AwardValue2 = value2,
-                        Notes = string.Format(noteTemplate, winner.Alias, maxVal)
+                        Notes = notes
                     });
                 }
             }
         }
 
         // 2. Rey de las Sorpresas
-        AddMaxAward("REY_SORPRESAS", s => s.UpsetHits, "Sorpresas", "{0} acertó {1} sorpresas en la jornada");
+        AddMaxAward("REY_SORPRESAS", s => s.UpsetHits, "Sorpresas", "{0} acertó {1} sorpresas en la jornada", p => p.IsUpsetHit);
 
         // 3. El Humillado
-        AddMaxAward("HUMILLADO", s => s.Humillaciones, "Humillaciones", "{0} sufrió {1} derrotas por goleada");
+        AddMaxAward("HUMILLADO", s => s.Humillaciones, "Humillaciones", "{0} sufrió {1} derrotas por goleada", p => p.IsHumillacion);
 
         // 4. Víctima del Somnífero
-        AddMaxAward("SOMNIFERO", s => s.Somniferos, "0-0", "{0} apostó a ganador en {1} partidos que terminaron 0-0");
+        AddMaxAward("SOMNIFERO", s => s.Somniferos, "0-0", "{0} apostó a ganador en {1} partidos que terminaron 0-0", p => p.IsSomnifero);
 
         // 5. Rey del Empate Fallido
-        AddMaxAward("EMPATE_FALLIDO", s => s.EmpatesFallidos, "Empates rotos", "{0} apostó empate en {1} partidos con ganador");
+        AddMaxAward("EMPATE_FALLIDO", s => s.EmpatesFallidos, "Empates rotos", "{0} apostó empate en {1} partidos con ganador", p => p.IsEmpateFallido);
 
         // 6. Partido Más Difícil (Rompe-Quinielas)
         var finishedMatches = weekMatches
@@ -327,7 +338,6 @@ public class ScoringEngine
 
         if (finishedMatches.Any())
         {
-            var picksList = weekPicks.ToList();
             Match? hardestMatch = null;
             decimal lowestAccuracy = 101m;
             int totalPicksInHardest = 0;
@@ -415,5 +425,172 @@ public class ScoringEngine
         }
 
         return (currentStreak, bestStreak);
+    }
+
+    public static string GetBaseNoteTemplate(string awardType) => awardType switch
+    {
+        "REY_SORPRESAS" => "{0} acertó {1} sorpresas en la jornada",
+        "HUMILLADO" => "{0} sufrió {1} derrotas por goleada",
+        "SOMNIFERO" => "{0} apostó a ganador en {1} partidos que terminaron 0-0",
+        "EMPATE_FALLIDO" => "{0} apostó empate en {1} partidos con ganador",
+        _ => "{0}"
+    };
+
+    public static List<AwardMatchDetailDto> GetAwardTriggerDetails(
+        string awardType,
+        int memberId,
+        IEnumerable<Match> weekMatches,
+        IEnumerable<Pick> weekPicks,
+        int totalMembers = 0)
+    {
+        var details = new List<AwardMatchDetailDto>();
+        var matchesList = weekMatches.ToList();
+        var picksList = weekPicks.ToList();
+        var matchesById = matchesList.ToDictionary(m => m.Id);
+
+        var memberPicks = picksList.Where(p => p.MemberId == memberId).ToList();
+
+        switch (awardType)
+        {
+            case "REY_SORPRESAS":
+            {
+                var upsetPicks = memberPicks
+                    .Where(p => p.IsUpsetHit || (p.IsHit == true && matchesById.TryGetValue(p.MatchId, out var m) && m.IsUpset))
+                    .OrderBy(p => p.MatchId)
+                    .ToList();
+
+                foreach (var pick in upsetPicks)
+                {
+                    if (!matchesById.TryGetValue(pick.MatchId, out var match)) continue;
+                    var homeAbbr = match.HomeTeam?.Abbreviation ?? "LOC";
+                    var awayAbbr = match.AwayTeam?.Abbreviation ?? "VIS";
+                    var homeName = match.HomeTeam?.Name ?? homeAbbr;
+                    var awayName = match.AwayTeam?.Name ?? awayAbbr;
+                    var score = $"{match.HomeScore}-{match.AwayScore}";
+
+                    var mPicks = picksList.Where(p => p.MatchId == match.Id).ToList();
+                    int correct = mPicks.Count(p => string.Equals(p.PickAbbr?.Trim(), match.WinnerAbbr?.Trim(), StringComparison.OrdinalIgnoreCase));
+                    decimal pct = mPicks.Count > 0 ? Math.Round((decimal)correct / mPicks.Count * 100m, 1) : 0m;
+
+                    details.Add(new AwardMatchDetailDto
+                    {
+                        MatchId = match.Id,
+                        MatchTitle = $"{homeName} vs {awayName}",
+                        TeamsAbbr = $"{homeAbbr} vs {awayAbbr}",
+                        Score = score,
+                        PickAbbr = pick.PickAbbr ?? "",
+                        DetailText = $"{homeAbbr} {score} {awayAbbr} (pronóstico {pick.PickAbbr})",
+                        ContextText = mPicks.Count > 0 
+                            ? $"Acierto sorpresa: solo {correct} de {mPicks.Count} acertaron ({pct}%)"
+                            : "Acierto sorpresa contra el pronóstico mayoritario"
+                    });
+                }
+                break;
+            }
+            case "EMPATE_FALLIDO":
+            {
+                var failedDrawPicks = memberPicks
+                    .Where(p => p.IsEmpateFallido || (string.Equals(p.PickAbbr?.Trim(), "EMPATE", StringComparison.OrdinalIgnoreCase) && matchesById.TryGetValue(p.MatchId, out var m) && m.HomeScore != m.AwayScore))
+                    .OrderBy(p => p.MatchId)
+                    .ToList();
+
+                foreach (var pick in failedDrawPicks)
+                {
+                    if (!matchesById.TryGetValue(pick.MatchId, out var match)) continue;
+                    var homeAbbr = match.HomeTeam?.Abbreviation ?? "LOC";
+                    var awayAbbr = match.AwayTeam?.Abbreviation ?? "VIS";
+                    var homeName = match.HomeTeam?.Name ?? homeAbbr;
+                    var awayName = match.AwayTeam?.Name ?? awayAbbr;
+                    var score = $"{match.HomeScore}-{match.AwayScore}";
+
+                    details.Add(new AwardMatchDetailDto
+                    {
+                        MatchId = match.Id,
+                        MatchTitle = $"{homeName} vs {awayName}",
+                        TeamsAbbr = $"{homeAbbr} vs {awayAbbr}",
+                        Score = score,
+                        PickAbbr = "EMPATE",
+                        DetailText = $"{homeAbbr} {score} {awayAbbr} (pronóstico EMPATE)",
+                        ContextText = $"Pronosticó empate, pero ganó {match.WinnerAbbr}"
+                    });
+                }
+                break;
+            }
+            case "HUMILLADO":
+            {
+                var humillacionPicks = memberPicks
+                    .Where(p => p.IsHumillacion)
+                    .OrderBy(p => p.MatchId)
+                    .ToList();
+
+                foreach (var pick in humillacionPicks)
+                {
+                    if (!matchesById.TryGetValue(pick.MatchId, out var match)) continue;
+                    var homeAbbr = match.HomeTeam?.Abbreviation ?? "LOC";
+                    var awayAbbr = match.AwayTeam?.Abbreviation ?? "VIS";
+                    var homeName = match.HomeTeam?.Name ?? homeAbbr;
+                    var awayName = match.AwayTeam?.Name ?? awayAbbr;
+                    var score = $"{match.HomeScore}-{match.AwayScore}";
+                    int diff = Math.Abs(match.HomeScore - match.AwayScore);
+
+                    details.Add(new AwardMatchDetailDto
+                    {
+                        MatchId = match.Id,
+                        MatchTitle = $"{homeName} vs {awayName}",
+                        TeamsAbbr = $"{homeAbbr} vs {awayAbbr}",
+                        Score = score,
+                        PickAbbr = pick.PickAbbr ?? "",
+                        DetailText = $"{homeAbbr} {score} {awayAbbr} (pronóstico {pick.PickAbbr})",
+                        ContextText = $"Goleada: diferencia de {diff} goles contra su pronóstico"
+                    });
+                }
+                break;
+            }
+            case "SOMNIFERO":
+            {
+                var somniferoPicks = memberPicks
+                    .Where(p => p.IsSomnifero)
+                    .OrderBy(p => p.MatchId)
+                    .ToList();
+
+                foreach (var pick in somniferoPicks)
+                {
+                    if (!matchesById.TryGetValue(pick.MatchId, out var match)) continue;
+                    var homeAbbr = match.HomeTeam?.Abbreviation ?? "LOC";
+                    var awayAbbr = match.AwayTeam?.Abbreviation ?? "VIS";
+                    var homeName = match.HomeTeam?.Name ?? homeAbbr;
+                    var awayName = match.AwayTeam?.Name ?? awayAbbr;
+
+                    details.Add(new AwardMatchDetailDto
+                    {
+                        MatchId = match.Id,
+                        MatchTitle = $"{homeName} vs {awayName}",
+                        TeamsAbbr = $"{homeAbbr} vs {awayAbbr}",
+                        Score = "0-0",
+                        PickAbbr = pick.PickAbbr ?? "",
+                        DetailText = $"{homeAbbr} 0-0 {awayAbbr} (pronóstico {pick.PickAbbr})",
+                        ContextText = "Apostó a ganador en partido que terminó 0-0"
+                    });
+                }
+                break;
+            }
+        }
+
+        return details;
+    }
+
+    public static string FormatEnrichedNotes(
+        string awardType,
+        string memberAlias,
+        int awardValue,
+        List<AwardMatchDetailDto> details,
+        string baseNoteTemplate)
+    {
+        string header = string.Format(baseNoteTemplate, memberAlias, awardValue);
+        if (details.Count == 0) return header;
+
+        string matchDetails = string.Join("; ", details.Select(d => d.DetailText));
+        string full = $"{header}. Partidos: {matchDetails}";
+        return full.Length <= 500 ? full : $"{full[..497]}...";
     }
 }
