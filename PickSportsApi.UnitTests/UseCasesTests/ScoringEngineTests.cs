@@ -226,4 +226,113 @@ public class ScoringEngineTests
         Assert.Equal(2, current);
         Assert.Equal(3, best);
     }
+
+    [Fact]
+    public void ApplyRecidivistAutofillPenalty_MiembroConTresSemanasAutollenado_SeTopaAlPeorHumanoMenosUno()
+    {
+        // ARRANGE
+        var memberManual1 = new QuinielaMember { Id = 1, Alias = "Alex" };
+        var memberManual2 = new QuinielaMember { Id = 2, Alias = "Alejandra" };
+        var memberRecidivist = new QuinielaMember { Id = 3, Alias = "Gigi" };
+        var members = new List<QuinielaMember> { memberManual1, memberManual2, memberRecidivist };
+
+        // Semana 10 (actual)
+        var w10Matches = Enumerable.Range(1, 9).Select(i => new Match { Id = i }).ToList();
+        var matchWeekMap = w10Matches.ToDictionary(m => m.Id, m => 10);
+
+        // Gigi tuvo semanas 8 y 9 también autollenadas
+        var historicalPicks = new List<Pick>();
+        for (int w = 8; w <= 9; w++)
+        {
+            for (int i = 100 * w; i < 100 * w + 9; i++)
+            {
+                historicalPicks.Add(new Pick { MemberId = 3, MatchId = i, IsAutoFilled = true });
+                matchWeekMap[i] = w;
+            }
+        }
+
+        // Semana 10 picks
+        var week10Picks = new List<Pick>();
+        // Manual 1: 5 aciertos
+        for (int i = 1; i <= 9; i++)
+            week10Picks.Add(new Pick { MemberId = 1, MatchId = i, IsAutoFilled = false, IsHit = i <= 5 });
+
+        // Manual 2: 3 aciertos (min manual = 3 => tope = 3 - 1 = 2)
+        for (int i = 1; i <= 9; i++)
+            week10Picks.Add(new Pick { MemberId = 2, MatchId = i, IsAutoFilled = false, IsHit = i <= 3 });
+
+        // Gigi: 6 aciertos y 2 sorpresas por azar
+        for (int i = 1; i <= 9; i++)
+            week10Picks.Add(new Pick { MemberId = 3, MatchId = i, IsAutoFilled = true, IsHit = i <= 6, IsUpsetHit = i <= 2 });
+
+        // ACT
+        _engine.ApplyRecidivistAutofillPenalty(members, week10Picks, historicalPicks, currentWeekNumber: 10, matchWeekNumbers: matchWeekMap);
+
+        // ASSERT: Gigi debe quedar topada a 2 aciertos (3 - 1) y 0 upsets
+        var gigiPicks = week10Picks.Where(p => p.MemberId == 3).ToList();
+        Assert.Equal(2, gigiPicks.Count(p => p.IsHit == true));
+        Assert.Equal(0, gigiPicks.Count(p => p.IsUpsetHit));
+    }
+
+    [Fact]
+    public void ApplyRecidivistAutofillPenalty_MiembroConUnaSemanaAutollenado_NoEsCastigado()
+    {
+        // ARRANGE: César sólo tiene 1 semana autollenada (semana 10), semanas 8 y 9 fueron manuales
+        var memberManual = new QuinielaMember { Id = 1, Alias = "Alex" };
+        var memberFirstTime = new QuinielaMember { Id = 2, Alias = "César" };
+        var members = new List<QuinielaMember> { memberManual, memberFirstTime };
+
+        var matchWeekMap = new Dictionary<int, int>();
+        for (int i = 1; i <= 9; i++) matchWeekMap[i] = 10;
+        for (int i = 10; i <= 18; i++) matchWeekMap[i] = 9;
+
+        var historicalPicks = new List<Pick>();
+        // Semana 9 de César fue manual
+        for (int i = 10; i <= 18; i++)
+            historicalPicks.Add(new Pick { MemberId = 2, MatchId = i, IsAutoFilled = false, IsHit = true });
+
+        var week10Picks = new List<Pick>();
+        // Alex sacó 2 aciertos (si fuera castigado, el tope sería 1)
+        for (int i = 1; i <= 9; i++)
+            week10Picks.Add(new Pick { MemberId = 1, MatchId = i, IsAutoFilled = false, IsHit = i <= 2 });
+
+        // César sacó 4 aciertos autollenados
+        for (int i = 1; i <= 9; i++)
+            week10Picks.Add(new Pick { MemberId = 2, MatchId = i, IsAutoFilled = true, IsHit = i <= 4, IsUpsetHit = i == 1 });
+
+        // ACT
+        _engine.ApplyRecidivistAutofillPenalty(members, week10Picks, historicalPicks, currentWeekNumber: 10, matchWeekNumbers: matchWeekMap);
+
+        // ASSERT: Como no es reincidente (streak = 1 < 3), conserva sus 4 aciertos y su upset
+        var cesarPicks = week10Picks.Where(p => p.MemberId == 2).ToList();
+        Assert.Equal(4, cesarPicks.Count(p => p.IsHit == true));
+        Assert.Equal(1, cesarPicks.Count(p => p.IsUpsetHit));
+    }
+
+    [Fact]
+    public void CalculateWeeklyStandings_EmpateEnAciertos_JugadorManualGanaDesempateSobreAutollenado()
+    {
+        // ARRANGE: Dos jugadores empatados en todo, pero uno llenó manual y el otro fue autollenado
+        var memberManual = new QuinielaMember { Id = 1, Alias = "B_Manual" };
+        var memberAuto = new QuinielaMember { Id = 2, Alias = "A_Auto" }; // Nombre 'A' para probar que no gane por orden alfabético
+        var members = new List<QuinielaMember> { memberManual, memberAuto };
+
+        var matches = new List<Match> { new() { Id = 1, StatusState = "post", WinnerAbbr = "AME" } };
+
+        var picks = new List<Pick>
+        {
+            new() { MemberId = 1, MatchId = 1, IsHit = true, IsAutoFilled = false },
+            new() { MemberId = 2, MatchId = 1, IsHit = true, IsAutoFilled = true }
+        };
+
+        // ACT
+        var standings = _engine.CalculateWeeklyStandings(members, picks, matches);
+
+        // ASSERT: El jugador manual debe quedar en Rank 1, y el bot en Rank 2
+        Assert.Equal("B_Manual", standings[0].Alias);
+        Assert.Equal(1, standings[0].Rank);
+        Assert.Equal("A_Auto", standings[1].Alias);
+        Assert.Equal(2, standings[1].Rank);
+    }
 }
+

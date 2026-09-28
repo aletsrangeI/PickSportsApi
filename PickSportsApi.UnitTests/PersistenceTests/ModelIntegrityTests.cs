@@ -63,7 +63,12 @@ public class ModelIntegrityTests : IDisposable
             QuinielaId = 1,
             MemberId = 1,
             MatchId = 10,
-            PickAbbr = "AME"
+            PickAbbr = "AME",
+            IsHit = true,
+            IsUpsetHit = true,
+            IsHumillacion = true,
+            IsSomnifero = true,
+            IsEmpateFallido = true
         };
 
         // Act - Insert
@@ -81,7 +86,12 @@ public class ModelIntegrityTests : IDisposable
             QuinielaId = 1,
             MemberId = 1,
             MatchId = 10,
-            PickAbbr = "EMPATE"
+            PickAbbr = "EMPATE",
+            IsHit = false,
+            IsUpsetHit = false,
+            IsHumillacion = false,
+            IsSomnifero = false,
+            IsEmpateFallido = false
         };
         var updated = await repo.UpsertPickAsync(updatedPick);
 
@@ -90,6 +100,11 @@ public class ModelIntegrityTests : IDisposable
         var storedUpdated = await repo.GetPickAsync(1, 1, 10);
         Assert.NotNull(storedUpdated);
         Assert.Equal("EMPATE", storedUpdated.PickAbbr);
+        Assert.False(storedUpdated.IsHit);
+        Assert.False(storedUpdated.IsUpsetHit);
+        Assert.False(storedUpdated.IsHumillacion);
+        Assert.False(storedUpdated.IsSomnifero);
+        Assert.False(storedUpdated.IsEmpateFallido);
 
         // Solo debe haber 1 pick para esa tupla
         var count = await _context.Picks.CountAsync(p => p.QuinielaId == 1 && p.MemberId == 1 && p.MatchId == 10);

@@ -71,8 +71,118 @@ public class ScoringEngine
     }
 
     /// <summary>
+    /// Aplica la regla anti-abandono por reincidencia de autollenado:
+    /// Si un participante acumula 3 o más semanas consecutivas jugando exclusivamente con autollenado,
+    /// sus aciertos en la jornada actual quedan topados a: Max(0, MinManualHits - 1),
+    /// donde MinManualHits es el puntaje mínimo de los participantes que llenaron manualmente esa semana.
+    /// Sus picks pierden además cualquier condición de Upset (Sorpresa).
+    /// </summary>
+    public void ApplyRecidivistAutofillPenalty(
+        IEnumerable<QuinielaMember> members,
+        IEnumerable<Pick> currentWeekPicks,
+        IEnumerable<Pick> allHistoricalPicks,
+        int currentWeekNumber,
+        IDictionary<int, int>? matchWeekNumbers = null,
+        int consecutiveWeeksThreshold = 3)
+    {
+        var currentPicksList = currentWeekPicks.ToList();
+        if (!currentPicksList.Any()) return;
+
+        int? GetWeekNum(Pick p)
+        {
+            if (matchWeekNumbers != null && matchWeekNumbers.TryGetValue(p.MatchId, out int w))
+                return w;
+            return p.Match?.Week?.WeekNumber;
+        }
+
+        var currentPicksByMember = currentPicksList
+            .GroupBy(p => p.MemberId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var allPicksList = allHistoricalPicks.ToList();
+        var historicalByMemberAndWeek = allPicksList
+            .Select(p => new { Pick = p, WeekNum = GetWeekNum(p) })
+            .Where(x => x.WeekNum.HasValue)
+            .GroupBy(x => (x.Pick.MemberId, x.WeekNum!.Value))
+            .ToDictionary(g => g.Key, g => g.Select(x => x.Pick).ToList());
+
+        var recidivistMemberIds = new HashSet<int>();
+
+        foreach (var member in members)
+        {
+            var mCurrent = currentPicksByMember.GetValueOrDefault(member.Id);
+            if (mCurrent == null || !mCurrent.Any()) continue;
+
+            // Para ser candidato a reincidente, TODOS los picks de la jornada actual deben ser autollenados
+            if (!mCurrent.All(p => p.IsAutoFilled))
+            {
+                continue;
+            }
+
+            int streak = 1; // La jornada actual ya es 100% autollenada
+            for (int w = currentWeekNumber - 1; w >= 1; w--)
+            {
+                if (historicalByMemberAndWeek.TryGetValue((member.Id, w), out var prevPicks) && prevPicks.Any())
+                {
+                    if (prevPicks.All(p => p.IsAutoFilled))
+                    {
+                        streak++;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            if (streak >= consecutiveWeeksThreshold)
+            {
+                recidivistMemberIds.Add(member.Id);
+            }
+        }
+
+        if (!recidivistMemberIds.Any()) return;
+
+        // Calcular puntaje mínimo de los participantes manuales en la jornada actual
+        var manualMembersHits = members
+            .Where(m => !recidivistMemberIds.Contains(m.Id)
+                        && currentPicksByMember.TryGetValue(m.Id, out var picks)
+                        && !picks.All(p => p.IsAutoFilled))
+            .Select(m => currentPicksByMember[m.Id].Count(p => p.IsHit == true))
+            .ToList();
+
+        int minManualHits = manualMembersHits.Any() ? manualMembersHits.Min() : 0;
+        int cap = Math.Max(0, minManualHits - 1);
+
+        foreach (var memberId in recidivistMemberIds)
+        {
+            if (!currentPicksByMember.TryGetValue(memberId, out var mPicks)) continue;
+
+            // 1. Descalificar sorpresas
+            foreach (var p in mPicks)
+            {
+                p.IsUpsetHit = false;
+            }
+
+            // 2. Aplicar tope a los aciertos
+            var hitPicks = mPicks.Where(p => p.IsHit == true).OrderBy(p => p.MatchId).ToList();
+            if (hitPicks.Count > cap)
+            {
+                for (int i = cap; i < hitPicks.Count; i++)
+                {
+                    hitPicks[i].IsHit = false;
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Calcula la tabla de posiciones semanal aplicando el ordenamiento en cascada estricto:
-    /// 1° Hits DESC -> 2° UpsetHits DESC -> 3° Humillaciones ASC.
+    /// 1° Hits DESC -> 2° UpsetHits DESC -> 3° Humillaciones ASC -> 4° Manual antes que Auto -> 5° Alias ASC.
     /// </summary>
     public List<MemberStandingDto> CalculateWeeklyStandings(
         IEnumerable<QuinielaMember> members,
@@ -85,10 +195,15 @@ public class ScoringEngine
             .Select(m => m.Id)
             .ToHashSet();
 
-        var picksByMember = weekPicks
+        var weekPicksList = weekPicks.ToList();
+        var picksByMember = weekPicksList
             .Where(p => finishedMatchIds.Contains(p.MatchId))
             .GroupBy(p => p.MemberId)
             .ToDictionary(g => g.Key, g => g.ToList());
+
+        var isAllAutoByMember = weekPicksList
+            .GroupBy(p => p.MemberId)
+            .ToDictionary(g => g.Key, g => g.Any() && g.All(p => p.IsAutoFilled));
 
         var standings = new List<MemberStandingDto>();
 
@@ -123,11 +238,12 @@ public class ScoringEngine
             });
         }
 
-        // Ordenamiento en cascada estricto
+        // Ordenamiento en cascada estricto (favorece manual sobre autollenado en empate)
         var sorted = standings
             .OrderByDescending(s => s.Hits)
             .ThenByDescending(s => s.UpsetHits)
             .ThenBy(s => s.Humillaciones)
+            .ThenBy(s => isAllAutoByMember.GetValueOrDefault(s.MemberId, false))
             .ThenBy(s => s.Alias)
             .ToList();
 

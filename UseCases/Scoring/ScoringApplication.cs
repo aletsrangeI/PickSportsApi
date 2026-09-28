@@ -41,11 +41,18 @@ public class ScoringApplication : IScoringApplication
         var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(weekId)).ToList();
         var weekPicks = (await _unitOfWork.Picks.GetAllPicksForWeekAsync(quinielaId, weekId)).ToList();
 
+        bool isFootball = string.Equals(quiniela.League?.Sport?.Name, "Football", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(quiniela.League?.Code, "nfl", StringComparison.OrdinalIgnoreCase);
+
+        var allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+
+        _scoringEngine.EvaluatePicksAndMatches(matches, weekPicks, members.Count, isFootball);
+        _scoringEngine.ApplyRecidivistAutofillPenalty(members, weekPicks, allHistoricalPicks, week.WeekNumber);
+
         // 1. Tabla Semanal (Desempate en cascada)
         var weeklyStandings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches);
 
         // 2. Tabla General Acumulada
-        var allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
         var picksByMember = allHistoricalPicks
             .Where(p => p.IsHit.HasValue)
             .GroupBy(p => p.MemberId)
@@ -148,11 +155,14 @@ public class ScoringApplication : IScoringApplication
         var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(weekId)).ToList();
         var weekPicks = (await _unitOfWork.Picks.GetAllPicksForWeekAsync(quinielaId, weekId)).ToList();
 
+        var allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+
         bool isFootball = string.Equals(quiniela.League?.Sport?.Name, "Football", StringComparison.OrdinalIgnoreCase) 
                        || string.Equals(quiniela.League?.Code, "nfl", StringComparison.OrdinalIgnoreCase);
 
         // 1. Evaluar aciertos, upsets y castigos
         _scoringEngine.EvaluatePicksAndMatches(matches, weekPicks, members.Count, isFootball);
+        _scoringEngine.ApplyRecidivistAutofillPenalty(members, weekPicks, allHistoricalPicks, week.WeekNumber);
 
         // 2. Persistir picks calificados
         foreach (var pick in weekPicks)
@@ -179,7 +189,7 @@ public class ScoringApplication : IScoringApplication
         }
 
         // 6. Actualizar acumulados y rachas en QuinielaMember
-        var allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+        allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
         var historicalByMember = allHistoricalPicks
             .Where(p => p.IsHit.HasValue)
             .GroupBy(p => p.MemberId)

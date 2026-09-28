@@ -27,6 +27,7 @@ public class PickRepository : GenericRepository<Pick>, IPickRepository
     {
         return await _dbSet.AsNoTracking()
             .Include(p => p.Match)
+                .ThenInclude(m => m.Week)
             .Include(p => p.Member)
             .Where(p => p.QuinielaId == quinielaId && p.Match.WeekId == weekId)
             .ToListAsync();
@@ -36,6 +37,7 @@ public class PickRepository : GenericRepository<Pick>, IPickRepository
     {
         return await _dbSet.AsNoTracking()
             .Include(p => p.Match)
+                .ThenInclude(m => m.Week)
             .Include(p => p.Member)
             .Where(p => p.QuinielaId == quinielaId)
             .OrderBy(p => p.Match.DateUtc)
@@ -60,6 +62,11 @@ public class PickRepository : GenericRepository<Pick>, IPickRepository
         {
             existing.PickAbbr = pick.PickAbbr;
             existing.IsAutoFilled = pick.IsAutoFilled;
+            existing.IsHit = pick.IsHit;
+            existing.IsUpsetHit = pick.IsUpsetHit;
+            existing.IsHumillacion = pick.IsHumillacion;
+            existing.IsSomnifero = pick.IsSomnifero;
+            existing.IsEmpateFallido = pick.IsEmpateFallido;
             existing.LastModified = DateTime.UtcNow;
             _dbSet.Update(existing);
         }
