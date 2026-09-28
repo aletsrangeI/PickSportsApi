@@ -29,6 +29,7 @@ public class UnitOfWork : IUnitOfWork
         Catalogos = new CatalogoRepository(_dbContext);
         ContenidoCatalogos = new ContenidoCatalogoRepository(_dbContext);
         FormFields = new FormFieldRepository(_dbContext);
+        UserAvatarFiles = new UserAvatarFileRepository(_dbContext);
     }
 
     public IUserRepository Users { get; }
@@ -50,6 +51,7 @@ public class UnitOfWork : IUnitOfWork
     public ICatalogoRepository Catalogos { get; }
     public IContenidoCatalogoRepository ContenidoCatalogos { get; }
     public IFormFieldRepository FormFields { get; }
+    public IUserAvatarFileRepository UserAvatarFiles { get; }
 
     private Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? _currentTransaction;
 
