@@ -168,7 +168,7 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
 
                     if (allFinished && week.Status == "LOCKED")
                     {
-                        await CloseAndScoreWeekAsync(week, season, unitOfWork, scoringApp, webPush, ct);
+                        await CloseAndScoreWeekAsync(week, season, unitOfWork, scoringApp, webPush, espnSync, ct);
                     }
 
                     // Coleccionar partidos pendientes para calcular el tiempo óptimo de sueño
@@ -424,6 +424,7 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         IUnitOfWork unitOfWork,
         IScoringApplication scoringApp,
         IWebPushNotificationService webPush,
+        IEspnSyncService espnSync,
         CancellationToken ct)
     {
         _logger.LogInformation("[EspnLiveWorker] Concluyendo y calificando jornada {0} (ID={1}).", week.WeekNumber, week.Id);
@@ -459,5 +460,49 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         week.ScoredAt = DateTime.UtcNow;
         unitOfWork.Weeks.Update(week);
         await unitOfWork.Save(ct);
+
+        // Auto-publicar la siguiente jornada si existe y está en DRAFT
+        try
+        {
+            var nextWeekNumber = week.WeekNumber + 1;
+            var seasonWeeks = (await unitOfWork.Weeks.GetBySeasonIdAsync(season.Id)).ToList();
+            var nextWeek = seasonWeeks.FirstOrDefault(w => w.WeekNumber == nextWeekNumber);
+
+            if (nextWeek != null && string.Equals(nextWeek.Status, "DRAFT", StringComparison.OrdinalIgnoreCase))
+            {
+                nextWeek.Status = "PUBLISHED";
+                nextWeek.PublishedAt = DateTime.UtcNow;
+                unitOfWork.Weeks.Update(nextWeek);
+                await unitOfWork.Save(ct);
+                _logger.LogInformation("[EspnLiveWorker] Siguiente jornada {0} (ID={1}) publicada automáticamente.", nextWeek.WeekNumber, nextWeek.Id);
+
+                // Sincronizar partidos desde ESPN para la jornada recién publicada
+                try
+                {
+                    await espnSync.SyncWeekAsync(nextWeek.Id, ct);
+                }
+                catch (Exception syncEx)
+                {
+                    _logger.LogWarning("[EspnLiveWorker] No se pudieron sincronizar partidos inmediatamente para la jornada {0}: {1}", nextWeek.WeekNumber, syncEx.Message);
+                }
+
+                // Notificar a las quinielas que la nueva jornada está disponible para pronósticos
+                foreach (var quiniela in quinielas)
+                {
+                    var nextWeekPayload = new PushNotificationPayload(
+                        Title: $"🟢 ¡Jornada {nextWeek.WeekNumber} disponible!",
+                        Message: $"La jornada {nextWeek.WeekNumber} ya está abierta para ingresar pronósticos.",
+                        Url: $"/fixtures?weekId={nextWeek.Id}",
+                        Data: new { type = "week_published", weekId = nextWeek.Id, weekNumber = nextWeek.WeekNumber }
+                    );
+
+                    await webPush.SendNotificationToQuinielaAsync(quiniela.Id, nextWeekPayload, ct);
+                }
+            }
+        }
+        catch (Exception pubEx)
+        {
+            _logger.LogError("[EspnLiveWorker] Error al intentar auto-publicar la siguiente jornada: {0}", pubEx.Message);
+        }
     }
 }

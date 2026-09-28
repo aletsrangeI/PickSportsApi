@@ -289,4 +289,46 @@ public class EspnLiveScoreBackgroundWorkerTests
             It.Is<PushNotificationPayload>(p => p.Title.Contains("finalizada")),
             default), Times.Once);
     }
+
+    [Fact]
+    public async Task ProcessAutomationCycle_WhenAllMatchesFinished_ShouldPublishNextWeekIfDraft()
+    {
+        // Arrange
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        var season = new Season { Id = 1, LeagueId = 10, Active = true };
+        var currentWeek = new Week { Id = 100, SeasonId = 1, WeekNumber = 5, Status = "LOCKED", Active = true };
+        var nextWeek = new Week { Id = 101, SeasonId = 1, WeekNumber = 6, Status = "DRAFT", Active = true };
+        var quiniela = new Quiniela { Id = 50, LeagueId = 10, OwnerId = 999, Active = true, Name = "Liga Master" };
+
+        var match1 = new DbMatch { Id = 1, WeekId = 100, StatusState = "post", Active = true };
+
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week> { currentWeek, nextWeek });
+        _mockMatches.Setup(m => m.GetByWeekIdAsync(100)).ReturnsAsync(new List<DbMatch> { match1 });
+        _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quiniela });
+
+        _mockScoringApp.Setup(s => s.ScoreWeekAsync(50, 100, 999))
+            .ReturnsAsync(new Response<ScoreWeekResultDto> { isSuccess = true });
+
+        // Act
+        await worker.ProcessAutomationCycleAsync(
+            _mockUow.Object,
+            _mockEspnSync.Object,
+            _mockWebPush.Object,
+            _mockScoringApp.Object,
+            default);
+
+        // Assert
+        Assert.Equal("SCORED", currentWeek.Status);
+        Assert.Equal("PUBLISHED", nextWeek.Status);
+        Assert.NotNull(nextWeek.PublishedAt);
+        _mockWeeks.Verify(w => w.Update(nextWeek), Times.Once);
+        _mockUow.Verify(u => u.Save(It.IsAny<CancellationToken>()), Times.AtLeast(2));
+        _mockEspnSync.Verify(e => e.SyncWeekAsync(101, It.IsAny<CancellationToken>()), Times.Once);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            50,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("disponible")),
+            default), Times.Once);
+    }
 }
