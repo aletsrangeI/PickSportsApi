@@ -34,7 +34,7 @@ public class WeekRepository : GenericRepository<Week>, IWeekRepository
         var publishedOrLocked = await _dbSet.AsNoTracking()
             .Include(w => w.Matches)
             .Where(w => w.SeasonId == seasonId && (w.Status == "PUBLISHED" || w.Status == "LOCKED"))
-            .OrderBy(w => w.WeekNumber)
+            .OrderByDescending(w => w.WeekNumber)
             .FirstOrDefaultAsync();
 
         if (publishedOrLocked != null) return publishedOrLocked;
