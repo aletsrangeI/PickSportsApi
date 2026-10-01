@@ -55,6 +55,45 @@ public class NextWeekInfoDto
     public DateTime? FirstGameUtc { get; set; }
 }
 
+public class RadarMoverDto
+{
+    public int MemberId { get; set; }
+    public string Alias { get; set; } = string.Empty;
+    public string? DisplayName { get; set; }
+    public string? AvatarUrl { get; set; }
+    public int PreviousRank { get; set; }
+    public int CurrentRank { get; set; }
+    public int PositionsDelta { get; set; } // Positivo = subió, negativo = bajó
+    public int WeeklyHits { get; set; }
+    public int TiedCount { get; set; } // Otros miembros con el mismo delta
+}
+
+public class BulletinRadarDto
+{
+    public RadarMoverDto? Climber { get; set; }
+    public RadarMoverDto? Faller { get; set; }
+}
+
+public class BulletinFavoriteDto
+{
+    public string TeamName { get; set; } = string.Empty;
+    public string TeamAbbr { get; set; } = string.Empty;
+    public string? TeamLogoUrl { get; set; }
+    public string MatchLabel { get; set; } = string.Empty;
+    public decimal PickPct { get; set; }
+    public int PickCount { get; set; }
+    public int TotalPicks { get; set; }
+    public bool Won { get; set; }
+}
+
+public class BulletinPulseDto
+{
+    public decimal CommunityAccuracyPct { get; set; }
+    public int TotalHits { get; set; }
+    public int TotalPicks { get; set; }
+    public BulletinFavoriteDto? Favorite { get; set; }
+}
+
 public class WeeklyBulletinDto
 {
     public int QuinielaId { get; set; }
@@ -68,6 +107,8 @@ public class WeeklyBulletinDto
     public string? AdminAnnouncement { get; set; }
     public List<PodiumMemberDto> Podium { get; set; } = new();
     public BulletinAwardsDto Awards { get; set; } = new();
+    public BulletinRadarDto? Radar { get; set; }
+    public BulletinPulseDto? Pulse { get; set; }
     public NextWeekInfoDto? NextWeekInfo { get; set; }
 }
 

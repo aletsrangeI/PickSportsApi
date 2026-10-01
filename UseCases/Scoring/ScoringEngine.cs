@@ -83,10 +83,18 @@ public class ScoringEngine
         IEnumerable<Pick> allHistoricalPicks,
         int currentWeekNumber,
         IDictionary<int, int>? matchWeekNumbers = null,
-        int consecutiveWeeksThreshold = 3)
+        int consecutiveWeeksThreshold = 3,
+        int? seasonId = null)
     {
         var currentPicksList = currentWeekPicks.ToList();
         if (!currentPicksList.Any()) return;
+
+        // Blindaje multi-temporada: el WeekNumber se repite entre temporadas, así que se descartan
+        // picks cuya jornada pertenece a otra temporada. Picks sin Week cargada se conservan.
+        if (seasonId.HasValue)
+        {
+            allHistoricalPicks = allHistoricalPicks.Where(p => p.Match?.Week == null || p.Match.Week.SeasonId == seasonId.Value);
+        }
 
         int? GetWeekNum(Pick p)
         {
@@ -253,6 +261,142 @@ public class ScoringEngine
         }
 
         return sorted;
+    }
+
+    /// <summary>
+    /// Calcula la Tabla General acumulada de una temporada hasta la jornada indicada (inclusive).
+    /// A partir de la jornada 2 asigna PreviousRank y RankDelta respecto a la jornada anterior.
+    /// Solo considera picks calificados y galardones MVP de la temporada indicada (ADR-005/ADR-006).
+    /// Desempate en cascada: Aciertos DESC -> Sorpresas DESC -> Humillaciones ASC -> Jornadas como MVP DESC
+    /// -> Mejor jornada más reciente (aciertos de la última jornada, luego la anterior...) -> Alias (último recurso técnico).
+    /// </summary>
+    public List<MemberStandingDto> CalculateGeneralStandings(
+        IEnumerable<QuinielaMember> members,
+        IEnumerable<Pick> allPicks,
+        int seasonId,
+        int uptoWeekNumber,
+        IEnumerable<WeeklyAward>? awards = null)
+    {
+        var memberList = members.ToList();
+        var seasonPicks = allPicks
+            .Where(p => p.IsHit.HasValue && p.Match?.Week != null && p.Match.Week.SeasonId == seasonId)
+            .ToList();
+        var seasonMvps = (awards ?? Enumerable.Empty<WeeklyAward>())
+            .Where(a => a.AwardType == "MVP" && a.Week != null && a.Week.SeasonId == seasonId)
+            .ToList();
+
+        var sortedGeneral = BuildGeneralTable(memberList, seasonPicks, seasonMvps, uptoWeekNumber);
+
+        if (uptoWeekNumber > 1)
+        {
+            var previousRanks = BuildGeneralTable(memberList, seasonPicks, seasonMvps, uptoWeekNumber - 1)
+                .ToDictionary(s => s.MemberId, s => s.Rank);
+            foreach (var standing in sortedGeneral)
+            {
+                if (previousRanks.TryGetValue(standing.MemberId, out var previousRank))
+                {
+                    standing.PreviousRank = previousRank;
+                    standing.RankDelta = previousRank - standing.Rank;
+                }
+            }
+        }
+
+        return sortedGeneral;
+    }
+
+    private List<MemberStandingDto> BuildGeneralTable(
+        List<QuinielaMember> members,
+        List<Pick> seasonPicks,
+        List<WeeklyAward> seasonMvps,
+        int uptoWeekNumber)
+    {
+        var picksByMember = seasonPicks
+            .Where(p => p.Match.Week.WeekNumber <= uptoWeekNumber)
+            .GroupBy(p => p.MemberId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var mvpCountByMember = seasonMvps
+            .Where(a => a.Week.WeekNumber <= uptoWeekNumber)
+            .GroupBy(a => a.MemberId)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var rows = new List<(MemberStandingDto Standing, int MvpCount, int[] HitsByRecentWeek)>();
+        foreach (var m in members)
+        {
+            var mHistorical = picksByMember.GetValueOrDefault(m.Id) ?? new List<Pick>();
+            int totalPicks = mHistorical.Count;
+            int totalHits = mHistorical.Count(p => p.IsHit == true);
+            decimal acc = totalPicks > 0 ? Math.Round((decimal)totalHits / totalPicks * 100m, 1) : 0m;
+
+            var (currentStreak, bestStreak) = CalculateMemberStreaks(mHistorical);
+
+            // Índice 0 = jornada más reciente; se compara hacia atrás hasta la jornada 1
+            var hitsByWeek = mHistorical
+                .Where(p => p.IsHit == true)
+                .GroupBy(p => p.Match.Week.WeekNumber)
+                .ToDictionary(g => g.Key, g => g.Count());
+            var hitsByRecentWeek = Enumerable.Range(0, Math.Max(uptoWeekNumber, 0))
+                .Select(i => hitsByWeek.GetValueOrDefault(uptoWeekNumber - i))
+                .ToArray();
+
+            rows.Add((new MemberStandingDto
+            {
+                MemberId = m.Id,
+                UserId = m.UserId,
+                Alias = m.Alias,
+                DisplayName = m.User?.DisplayName ?? m.Alias,
+                AvatarUrl = m.User?.AvatarUrl,
+                Hits = totalHits,
+                TotalPicks = totalPicks,
+                AccuracyPct = acc,
+                UpsetHits = mHistorical.Count(p => p.IsUpsetHit),
+                Humillaciones = mHistorical.Count(p => p.IsHumillacion),
+                Somniferos = mHistorical.Count(p => p.IsSomnifero),
+                EmpatesFallidos = mHistorical.Count(p => p.IsEmpateFallido),
+                CurrentStreak = currentStreak,
+                BestStreak = bestStreak
+            }, mvpCountByMember.GetValueOrDefault(m.Id), hitsByRecentWeek));
+        }
+
+        var sorted = rows
+            .OrderByDescending(r => r.Standing.Hits)
+            .ThenByDescending(r => r.Standing.UpsetHits)
+            .ThenBy(r => r.Standing.Humillaciones)
+            .ThenByDescending(r => r.MvpCount)
+            .ThenBy(r => r.HitsByRecentWeek, RecentWeeksComparer.Instance)
+            // Último recurso técnico: solo aplica si empatan en todas las jornadas y en MVPs
+            .ThenBy(r => r.Standing.Alias)
+            .Select(r => r.Standing)
+            .ToList();
+
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            sorted[i].Rank = i + 1;
+        }
+
+        return sorted;
+    }
+
+    /// <summary>
+    /// Ordena primero a quien tuvo más aciertos en la jornada más reciente; si empatan, compara la anterior, y así sucesivamente.
+    /// </summary>
+    private sealed class RecentWeeksComparer : IComparer<int[]>
+    {
+        public static readonly RecentWeeksComparer Instance = new();
+
+        public int Compare(int[]? x, int[]? y)
+        {
+            if (ReferenceEquals(x, y)) return 0;
+            if (x == null) return 1;
+            if (y == null) return -1;
+
+            int length = Math.Min(x.Length, y.Length);
+            for (int i = 0; i < length; i++)
+            {
+                if (x[i] != y[i]) return y[i].CompareTo(x[i]);
+            }
+            return 0;
+        }
     }
 
     /// <summary>

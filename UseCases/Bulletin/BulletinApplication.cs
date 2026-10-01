@@ -63,9 +63,15 @@ public class BulletinApplication : IBulletinApplication
         var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
         var weekPicks = (await _unitOfWork.Picks.GetAllPicksForWeekAsync(quinielaId, week.Id)).ToList();
 
+        var allPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+
         var standings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches);
+        var allAwards = await _unitOfWork.WeeklyAwards.GetAllAwardsForQuinielaAsync(quinielaId);
+        var generalStandings = _scoringEngine.CalculateGeneralStandings(members, allPicks, week.SeasonId, week.WeekNumber, allAwards);
         var podium = BuildPodium(standings);
         var awards = BuildAwards(quinielaId, week.Id, standings, matches, weekPicks);
+        var radar = BuildRadar(generalStandings, standings);
+        var pulse = BuildPulse(matches, weekPicks);
 
         var bulletin = await _unitOfWork.WeeklyBulletins.GetByQuinielaAndWeekAsync(quinielaId, week.Id);
         // Auto-publicación: en cuanto la jornada está calificada se emite la edición oficial
@@ -100,6 +106,8 @@ public class BulletinApplication : IBulletinApplication
             AdminAnnouncement = bulletin?.AdminAnnouncement,
             Podium = podium,
             Awards = awards,
+            Radar = radar,
+            Pulse = pulse,
             NextWeekInfo = nextWeekInfo
         };
 
@@ -299,6 +307,114 @@ public class BulletinApplication : IBulletinApplication
         }
 
         return hardest;
+    }
+
+    /// <summary>
+    /// Radar de la Tabla: mayor subida (Trepa Cerros) y mayor caída (Caída Libre) en la Tabla General.
+    /// Empates en el delta se resuelven por la posición en la Tabla Semanal (mejor para subida, peor para caída).
+    /// </summary>
+    private static BulletinRadarDto? BuildRadar(List<MemberStandingDto> generalStandings, List<MemberStandingDto> weeklyStandings)
+    {
+        var movers = generalStandings.Where(s => s.RankDelta.HasValue && s.PreviousRank.HasValue).ToList();
+        if (movers.Count == 0) return null;
+
+        var weeklyByMember = weeklyStandings.ToDictionary(s => s.MemberId);
+        int WeeklyRank(MemberStandingDto s) => weeklyByMember.TryGetValue(s.MemberId, out var w) ? w.Rank : int.MaxValue;
+
+        RadarMoverDto ToMover(MemberStandingDto s) => new()
+        {
+            MemberId = s.MemberId,
+            Alias = s.Alias,
+            DisplayName = s.DisplayName,
+            AvatarUrl = s.AvatarUrl,
+            PreviousRank = s.PreviousRank!.Value,
+            CurrentRank = s.Rank,
+            PositionsDelta = s.RankDelta!.Value,
+            WeeklyHits = weeklyByMember.TryGetValue(s.MemberId, out var w) ? w.Hits : 0,
+            TiedCount = movers.Count(m => m.MemberId != s.MemberId && m.RankDelta == s.RankDelta)
+        };
+
+        var climber = movers
+            .Where(s => s.RankDelta > 0)
+            .OrderByDescending(s => s.RankDelta)
+            .ThenBy(WeeklyRank)
+            .FirstOrDefault();
+
+        var faller = movers
+            .Where(s => s.RankDelta < 0)
+            .OrderBy(s => s.RankDelta)
+            .ThenByDescending(WeeklyRank)
+            .FirstOrDefault();
+
+        return new BulletinRadarDto
+        {
+            Climber = climber != null ? ToMover(climber) : null,
+            Faller = faller != null ? ToMover(faller) : null
+        };
+    }
+
+    /// <summary>
+    /// Pulso de la Jornada: efectividad comunitaria y "El Consentido" (opción no-empate con mayor consenso en un partido).
+    /// </summary>
+    private static BulletinPulseDto? BuildPulse(List<Match> matches, List<Pick> weekPicks)
+    {
+        var finishedMatches = matches
+            .Where(m => string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(m.WinnerAbbr))
+            .OrderBy(m => m.DateUtc)
+            .ToList();
+
+        var finishedIds = finishedMatches.Select(m => m.Id).ToHashSet();
+        var finishedPicks = weekPicks.Where(p => finishedIds.Contains(p.MatchId)).ToList();
+        if (finishedPicks.Count == 0) return null;
+
+        int totalHits = finishedPicks.Count(p => p.IsHit == true);
+
+        BulletinFavoriteDto? favorite = null;
+        foreach (var match in finishedMatches)
+        {
+            var matchPicks = finishedPicks.Where(p => p.MatchId == match.Id).ToList();
+            if (matchPicks.Count == 0) continue;
+
+            var top = matchPicks
+                .Select(p => p.PickAbbr?.Trim().ToUpperInvariant() ?? string.Empty)
+                .Where(abbr => abbr.Length > 0 && abbr != "EMPATE")
+                .GroupBy(abbr => abbr)
+                .Select(g => new { Abbr = g.Key, Count = g.Count() })
+                .OrderByDescending(x => x.Count)
+                .FirstOrDefault();
+            if (top == null) continue;
+
+            decimal pct = Math.Round((decimal)top.Count / matchPicks.Count * 100m, 1);
+            // Partidos ordenados por fecha: solo un porcentaje estrictamente mayor desplaza al actual
+            if (favorite != null && pct <= favorite.PickPct) continue;
+
+            var team = string.Equals(match.HomeTeam?.Abbreviation, top.Abbr, StringComparison.OrdinalIgnoreCase)
+                ? match.HomeTeam
+                : string.Equals(match.AwayTeam?.Abbreviation, top.Abbr, StringComparison.OrdinalIgnoreCase)
+                    ? match.AwayTeam
+                    : null;
+
+            favorite = new BulletinFavoriteDto
+            {
+                TeamName = team?.DisplayName ?? team?.Name ?? top.Abbr,
+                TeamAbbr = top.Abbr,
+                TeamLogoUrl = team?.LogoUrl,
+                MatchLabel = $"{match.HomeTeam?.Abbreviation ?? "LOC"} vs {match.AwayTeam?.Abbreviation ?? "VIS"}",
+                PickPct = pct,
+                PickCount = top.Count,
+                TotalPicks = matchPicks.Count,
+                Won = string.Equals(match.WinnerAbbr!.Trim(), top.Abbr, StringComparison.OrdinalIgnoreCase)
+            };
+        }
+
+        return new BulletinPulseDto
+        {
+            CommunityAccuracyPct = Math.Round((decimal)totalHits / finishedPicks.Count * 100m, 1),
+            TotalHits = totalHits,
+            TotalPicks = finishedPicks.Count,
+            Favorite = favorite
+        };
     }
 
     private async Task<NextWeekInfoDto?> BuildNextWeekInfoAsync(Week currentWeek)
