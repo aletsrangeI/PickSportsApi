@@ -44,84 +44,19 @@ public class ScoringApplication : IScoringApplication
         bool isFootball = string.Equals(quiniela.League?.Sport?.Name, "Football", StringComparison.OrdinalIgnoreCase)
                        || string.Equals(quiniela.League?.Code, "nfl", StringComparison.OrdinalIgnoreCase);
 
-        var allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+        var allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId))
+            .Where(p => p.Match?.Week?.SeasonId == week.SeasonId)
+            .ToList();
 
         _scoringEngine.EvaluatePicksAndMatches(matches, weekPicks, members.Count, isFootball);
-        _scoringEngine.ApplyRecidivistAutofillPenalty(members, weekPicks, allHistoricalPicks, week.WeekNumber);
+        _scoringEngine.ApplyRecidivistAutofillPenalty(members, weekPicks, allHistoricalPicks, week.WeekNumber, seasonId: week.SeasonId);
 
         // 1. Tabla Semanal (Desempate en cascada)
         var weeklyStandings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches);
 
-        // 2. Tabla General Acumulada
-        var currentPicks = allHistoricalPicks
-            .Where(p => p.IsHit.HasValue && p.Match?.Week?.WeekNumber <= week.WeekNumber)
-            .ToList();
-
-        var picksByMember = currentPicks
-            .GroupBy(p => p.MemberId)
-            .ToDictionary(g => g.Key, g => g.ToList());
-
-        var generalList = new List<MemberStandingDto>();
-        foreach (var m in members)
-        {
-            var mHistorical = picksByMember.GetValueOrDefault(m.Id) ?? new List<Pick>();
-            int totalPicks = mHistorical.Count;
-            int totalHits = mHistorical.Count(p => p.IsHit == true);
-            int totalUpsets = mHistorical.Count(p => p.IsUpsetHit);
-            int totalHumillaciones = mHistorical.Count(p => p.IsHumillacion);
-            int totalSomniferos = mHistorical.Count(p => p.IsSomnifero);
-            int totalEmpatesFallidos = mHistorical.Count(p => p.IsEmpateFallido);
-            decimal acc = totalPicks > 0 ? Math.Round((decimal)totalHits / totalPicks * 100m, 1) : 0m;
-
-            var (currentStreak, bestStreak) = _scoringEngine.CalculateMemberStreaks(mHistorical);
-
-            generalList.Add(new MemberStandingDto
-            {
-                MemberId = m.Id,
-                UserId = m.UserId,
-                Alias = m.Alias,
-                DisplayName = m.User?.DisplayName ?? m.Alias,
-                AvatarUrl = m.User?.AvatarUrl,
-                Hits = totalHits,
-                TotalPicks = totalPicks,
-                AccuracyPct = acc,
-                UpsetHits = totalUpsets,
-                Humillaciones = totalHumillaciones,
-                Somniferos = totalSomniferos,
-                EmpatesFallidos = totalEmpatesFallidos,
-                CurrentStreak = currentStreak,
-                BestStreak = bestStreak
-            });
-        }
-
-        var sortedGeneral = generalList
-            .OrderByDescending(s => s.Hits)
-            .ThenByDescending(s => s.UpsetHits)
-            .ThenBy(s => s.Humillaciones)
-            .ThenBy(s => s.Alias)
-            .ToList();
-
-        for (int i = 0; i < sortedGeneral.Count; i++)
-        {
-            sortedGeneral[i].Rank = i + 1;
-        }
-
-        if (week.WeekNumber > 1)
-        {
-            var previousPicks = allHistoricalPicks
-                .Where(p => p.IsHit.HasValue && p.Match?.Week?.WeekNumber < week.WeekNumber)
-                .ToList();
-
-            var previousRanks = CalculateGeneralRanks(members, previousPicks);
-            foreach (var standing in sortedGeneral)
-            {
-                if (previousRanks.TryGetValue(standing.MemberId, out var previousRank))
-                {
-                    standing.PreviousRank = previousRank;
-                    standing.RankDelta = previousRank - standing.Rank;
-                }
-            }
-        }
+        // 2. Tabla General Acumulada de la temporada (con delta respecto a la jornada anterior)
+        var seasonAwards = await _unitOfWork.WeeklyAwards.GetAllAwardsForQuinielaAsync(quinielaId);
+        var sortedGeneral = _scoringEngine.CalculateGeneralStandings(members, allHistoricalPicks, week.SeasonId, week.WeekNumber, seasonAwards);
 
         var finishedMatchesCount = matches.Count(m => string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase));
 
@@ -141,33 +76,6 @@ public class ScoringApplication : IScoringApplication
         };
 
         return response;
-    }
-
-    private static Dictionary<int, int> CalculateGeneralRanks(
-        IEnumerable<QuinielaMember> members,
-        IEnumerable<Pick> picks)
-    {
-        var standings = members.Select(member =>
-        {
-            var memberPicks = picks.Where(p => p.MemberId == member.Id).ToList();
-            return new
-            {
-                member.Id,
-                member.Alias,
-                Hits = memberPicks.Count(p => p.IsHit == true),
-                UpsetHits = memberPicks.Count(p => p.IsUpsetHit),
-                Humillaciones = memberPicks.Count(p => p.IsHumillacion)
-            };
-        })
-        .OrderByDescending(s => s.Hits)
-        .ThenByDescending(s => s.UpsetHits)
-        .ThenBy(s => s.Humillaciones)
-        .ThenBy(s => s.Alias)
-        .ToList();
-
-        return standings
-            .Select((standing, index) => new { standing.Id, Rank = index + 1 })
-            .ToDictionary(s => s.Id, s => s.Rank);
     }
 
     public async Task<Response<ScoreWeekResultDto>> ScoreWeekAsync(int quinielaId, int weekId, int userId)
@@ -202,14 +110,16 @@ public class ScoringApplication : IScoringApplication
         var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(weekId)).ToList();
         var weekPicks = (await _unitOfWork.Picks.GetAllPicksForWeekAsync(quinielaId, weekId)).ToList();
 
-        var allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+        var allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId))
+            .Where(p => p.Match?.Week?.SeasonId == week.SeasonId)
+            .ToList();
 
         bool isFootball = string.Equals(quiniela.League?.Sport?.Name, "Football", StringComparison.OrdinalIgnoreCase) 
                        || string.Equals(quiniela.League?.Code, "nfl", StringComparison.OrdinalIgnoreCase);
 
         // 1. Evaluar aciertos, upsets y castigos
         _scoringEngine.EvaluatePicksAndMatches(matches, weekPicks, members.Count, isFootball);
-        _scoringEngine.ApplyRecidivistAutofillPenalty(members, weekPicks, allHistoricalPicks, week.WeekNumber);
+        _scoringEngine.ApplyRecidivistAutofillPenalty(members, weekPicks, allHistoricalPicks, week.WeekNumber, seasonId: week.SeasonId);
 
         // 2. Persistir picks calificados
         foreach (var pick in weekPicks)
@@ -235,14 +145,26 @@ public class ScoringApplication : IScoringApplication
             await _unitOfWork.WeeklyAwards.InsertAsync(award);
         }
 
-        // 6. Actualizar acumulados y rachas en QuinielaMember
-        allHistoricalPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+        // 6. Actualizar acumulados y rachas en QuinielaMember.
+        // Solo con jornadas de la temporada en juego de la quiniela (la de sus picks más recientes):
+        // recalificar una jornada histórica no debe sobrescribir los acumulados de la temporada en curso (H-009).
+        var quinielaPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+        var activeSeasonId = quinielaPicks
+            .Where(p => p.Match?.Week != null)
+            .OrderByDescending(p => p.Match.DateUtc)
+            .Select(p => (int?)p.Match.Week.SeasonId)
+            .FirstOrDefault();
+        bool isCurrentSeasonWeek = activeSeasonId == null || activeSeasonId == week.SeasonId;
+
+        allHistoricalPicks = quinielaPicks
+            .Where(p => p.Match?.Week?.SeasonId == week.SeasonId)
+            .ToList();
         var historicalByMember = allHistoricalPicks
             .Where(p => p.IsHit.HasValue)
             .GroupBy(p => p.MemberId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        foreach (var member in members)
+        foreach (var member in isCurrentSeasonWeek ? members : new List<QuinielaMember>())
         {
             var mHistorical = historicalByMember.GetValueOrDefault(member.Id) ?? new List<Pick>();
             member.TotalHits = mHistorical.Count(p => p.IsHit == true);

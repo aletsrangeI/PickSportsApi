@@ -334,6 +334,67 @@ public class ScoringEngineTests
         Assert.Equal(1, cesarPicks.Count(p => p.IsUpsetHit));
     }
 
+    /// <summary>
+    /// Arma el escenario de Gigi autollenando la semana 10 de la temporada 2, con semanas 8 y 9 autollenadas
+    /// en la temporada indicada. Alex es el único humano con 3 aciertos (tope de castigo = 2).
+    /// </summary>
+    private static (List<QuinielaMember> Members, List<Pick> Week10Picks, List<Pick> Historical) BuildRecidivistSeasonScenario(int historicalSeasonId)
+    {
+        var members = new List<QuinielaMember>
+        {
+            new() { Id = 1, Alias = "Alex" },
+            new() { Id = 3, Alias = "Gigi" }
+        };
+
+        var historical = new List<Pick>();
+        for (int w = 8; w <= 9; w++)
+        {
+            var week = new Week { Id = w, SeasonId = historicalSeasonId, WeekNumber = w };
+            for (int i = 100 * w; i < 100 * w + 9; i++)
+                historical.Add(new Pick { MemberId = 3, MatchId = i, IsAutoFilled = true, Match = new Match { Id = i, Week = week } });
+        }
+
+        var currentWeek = new Week { Id = 10, SeasonId = 2, WeekNumber = 10 };
+        var week10Picks = new List<Pick>();
+        for (int i = 1; i <= 9; i++)
+        {
+            week10Picks.Add(new Pick { MemberId = 1, MatchId = i, IsAutoFilled = false, IsHit = i <= 3, Match = new Match { Id = i, Week = currentWeek } });
+            week10Picks.Add(new Pick { MemberId = 3, MatchId = i, IsAutoFilled = true, IsHit = i <= 6, IsUpsetHit = i <= 2, Match = new Match { Id = i, Week = currentWeek } });
+        }
+
+        return (members, week10Picks, historical);
+    }
+
+    [Fact]
+    public void ApplyRecidivistAutofillPenalty_ConSeasonId_IgnoraAutollenadosDeOtraTemporada()
+    {
+        // ARRANGE: las semanas 8 y 9 autollenadas son de la temporada 1; la semana 10 es de la temporada 2
+        var (members, week10Picks, historical) = BuildRecidivistSeasonScenario(historicalSeasonId: 1);
+
+        // ACT
+        _engine.ApplyRecidivistAutofillPenalty(members, week10Picks, historical, currentWeekNumber: 10, seasonId: 2);
+
+        // ASSERT: en la temporada 2 Gigi solo lleva 1 semana autollenada, no es reincidente
+        var gigiPicks = week10Picks.Where(p => p.MemberId == 3).ToList();
+        Assert.Equal(6, gigiPicks.Count(p => p.IsHit == true));
+        Assert.Equal(2, gigiPicks.Count(p => p.IsUpsetHit));
+    }
+
+    [Fact]
+    public void ApplyRecidivistAutofillPenalty_ConSeasonId_MismaTemporada_ConservaElCastigo()
+    {
+        // ARRANGE: las semanas 8, 9 y 10 autollenadas son todas de la temporada 2
+        var (members, week10Picks, historical) = BuildRecidivistSeasonScenario(historicalSeasonId: 2);
+
+        // ACT
+        _engine.ApplyRecidivistAutofillPenalty(members, week10Picks, historical, currentWeekNumber: 10, seasonId: 2);
+
+        // ASSERT: mismo resultado que sin blindaje, Gigi topada a 2 aciertos (3 - 1) y 0 sorpresas
+        var gigiPicks = week10Picks.Where(p => p.MemberId == 3).ToList();
+        Assert.Equal(2, gigiPicks.Count(p => p.IsHit == true));
+        Assert.Equal(0, gigiPicks.Count(p => p.IsUpsetHit));
+    }
+
     [Fact]
     public void CalculateWeeklyStandings_EmpateEnAciertos_JugadorManualGanaDesempateSobreAutollenado()
     {
@@ -359,4 +420,142 @@ public class ScoringEngineTests
         Assert.Equal("A_Auto", standings[1].Alias);
         Assert.Equal(2, standings[1].Rank);
     }
+
+    #region Tabla General - Desempate (H-005)
+
+    // "Ana" ganaría por orden alfabético; los criterios deportivos deben poder favorecer a "Zoe".
+    private static readonly List<QuinielaMember> TiebreakMembers = new()
+    {
+        new() { Id = 1, UserId = 1, Alias = "Ana" },
+        new() { Id = 2, UserId = 2, Alias = "Zoe" }
+    };
+
+    private static Week SeasonWeek(int weekNumber, int seasonId = 1) =>
+        new() { Id = seasonId * 100 + weekNumber, SeasonId = seasonId, WeekNumber = weekNumber };
+
+    /// <summary>
+    /// Genera picks calificados: por cada jornada, la cantidad de aciertos indicada más un fallo.
+    /// </summary>
+    private static List<Pick> PicksByWeek(int memberId, params (Week Week, int Hits)[] weeks)
+    {
+        var picks = new List<Pick>();
+        foreach (var (week, hits) in weeks)
+        {
+            for (int i = 0; i <= hits; i++)
+            {
+                int matchId = week.Id * 10 + i;
+                picks.Add(new Pick { MemberId = memberId, MatchId = matchId, IsHit = i < hits, Match = new Match { Id = matchId, Week = week } });
+            }
+        }
+        return picks;
+    }
+
+    private static WeeklyAward Mvp(int memberId, Week week) =>
+        new() { MemberId = memberId, AwardType = "MVP", Week = week, WeekId = week.Id };
+
+    [Fact]
+    public void CalculateGeneralStandings_EmpateEnAciertos_GanaQuienTieneMasJornadasComoMvp()
+    {
+        // ARRANGE: ambos con 2 aciertos; Ana tuvo mejor jornada reciente, pero Zoe fue MVP 2 veces y Ana 1
+        var (w1, w2, w3) = (SeasonWeek(1), SeasonWeek(2), SeasonWeek(3));
+        var picks = PicksByWeek(1, (w1, 0), (w2, 0), (w3, 2));
+        picks.AddRange(PicksByWeek(2, (w1, 2), (w2, 0), (w3, 0)));
+        var awards = new List<WeeklyAward> { Mvp(2, w1), Mvp(2, w2), Mvp(1, w3) };
+
+        // ACT
+        var standings = _engine.CalculateGeneralStandings(TiebreakMembers, picks, seasonId: 1, uptoWeekNumber: 3, awards);
+
+        // ASSERT
+        Assert.Equal("Zoe", standings[0].Alias);
+        Assert.Equal("Ana", standings[1].Alias);
+    }
+
+    [Fact]
+    public void CalculateGeneralStandings_EmpateEnAciertosYMvp_GanaMejorJornadaMasReciente()
+    {
+        // ARRANGE: ambos con 3 aciertos y sin MVP; en la jornada 2 Zoe hizo 2 y Ana 1
+        var (w1, w2) = (SeasonWeek(1), SeasonWeek(2));
+        var picks = PicksByWeek(1, (w1, 2), (w2, 1));
+        picks.AddRange(PicksByWeek(2, (w1, 1), (w2, 2)));
+
+        // ACT
+        var standings = _engine.CalculateGeneralStandings(TiebreakMembers, picks, seasonId: 1, uptoWeekNumber: 2);
+
+        // ASSERT
+        Assert.Equal("Zoe", standings[0].Alias);
+        Assert.Equal(1, standings[0].Rank);
+        Assert.Equal("Ana", standings[1].Alias);
+        Assert.Equal(2, standings[1].Rank);
+    }
+
+    [Fact]
+    public void CalculateGeneralStandings_EmpateEnJornadaMasReciente_ComparaLaJornadaAnterior()
+    {
+        // ARRANGE: jornada 3 empatada (1 y 1); en la jornada 2 Zoe hizo 1 y Ana 0
+        var (w1, w2, w3) = (SeasonWeek(1), SeasonWeek(2), SeasonWeek(3));
+        var picks = PicksByWeek(1, (w1, 2), (w2, 0), (w3, 1));
+        picks.AddRange(PicksByWeek(2, (w1, 1), (w2, 1), (w3, 1)));
+
+        // ACT
+        var standings = _engine.CalculateGeneralStandings(TiebreakMembers, picks, seasonId: 1, uptoWeekNumber: 3);
+
+        // ASSERT
+        Assert.Equal("Zoe", standings[0].Alias);
+        Assert.Equal("Ana", standings[1].Alias);
+    }
+
+    [Fact]
+    public void CalculateGeneralStandings_IgnoraMvpsDeOtraTemporada()
+    {
+        // ARRANGE: jornadas idénticas; los MVP de Zoe son de otra temporada y no deben contar
+        var w1 = SeasonWeek(1);
+        var picks = PicksByWeek(1, (w1, 1));
+        picks.AddRange(PicksByWeek(2, (w1, 1)));
+        var awards = new List<WeeklyAward> { Mvp(2, SeasonWeek(1, seasonId: 99)), Mvp(2, SeasonWeek(2, seasonId: 99)) };
+
+        // ACT
+        var standings = _engine.CalculateGeneralStandings(TiebreakMembers, picks, seasonId: 1, uptoWeekNumber: 1, awards);
+
+        // ASSERT: empate total, aplica el último recurso técnico
+        Assert.Equal("Ana", standings[0].Alias);
+        Assert.Equal("Zoe", standings[1].Alias);
+    }
+
+    [Fact]
+    public void CalculateGeneralStandings_PosicionAnteriorSoloCuentaMvpsHastaLaJornadaAnterior()
+    {
+        // ARRANGE: jornadas idénticas; Zoe fue MVP de la jornada 2 (la actual)
+        var (w1, w2) = (SeasonWeek(1), SeasonWeek(2));
+        var picks = PicksByWeek(1, (w1, 1), (w2, 1));
+        picks.AddRange(PicksByWeek(2, (w1, 1), (w2, 1)));
+        var awards = new List<WeeklyAward> { Mvp(2, w2) };
+
+        // ACT
+        var standings = _engine.CalculateGeneralStandings(TiebreakMembers, picks, seasonId: 1, uptoWeekNumber: 2, awards);
+
+        // ASSERT: en la jornada 1 Zoe era 2°; con el MVP de la jornada 2 sube a 1°
+        var zoe = standings.Single(s => s.Alias == "Zoe");
+        Assert.Equal(1, zoe.Rank);
+        Assert.Equal(2, zoe.PreviousRank);
+        Assert.Equal(1, zoe.RankDelta);
+    }
+
+    [Fact]
+    public void CalculateGeneralStandings_SorpresasPesanMasQueMvp()
+    {
+        // ARRANGE: mismos aciertos; Ana tiene 1 sorpresa y Zoe 1 MVP
+        var w1 = SeasonWeek(1);
+        var picks = PicksByWeek(1, (w1, 1));
+        picks.AddRange(PicksByWeek(2, (w1, 1)));
+        picks.First(p => p.MemberId == 1 && p.IsHit == true).IsUpsetHit = true;
+        var awards = new List<WeeklyAward> { Mvp(2, w1) };
+
+        // ACT
+        var standings = _engine.CalculateGeneralStandings(TiebreakMembers, picks, seasonId: 1, uptoWeekNumber: 1, awards);
+
+        // ASSERT
+        Assert.Equal("Ana", standings[0].Alias);
+    }
+
+    #endregion
 }
