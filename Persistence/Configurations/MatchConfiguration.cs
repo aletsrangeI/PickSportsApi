@@ -17,6 +17,8 @@ public class MatchConfiguration : IEntityTypeConfiguration<Match>
         builder.Property(m => m.Venue).HasMaxLength(150);
         builder.Property(m => m.City).HasMaxLength(100);
         builder.Property(m => m.PostponedToDate).IsRequired(false);
+        builder.Property(m => m.Broadcasters).HasMaxLength(300);
+        builder.Property(m => m.BroadcastersSource).HasMaxLength(20);
 
         builder.HasIndex(m => m.EspnGameId).IsUnique();
         builder.HasIndex(m => m.WeekId);

@@ -106,6 +106,14 @@ public class ScoringApplication : IScoringApplication
             return response;
         }
 
+        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        if (league?.IsPlayoffWeek(week.WeekNumber) == true)
+        {
+            response.isSuccess = false;
+            response.Message = "Las jornadas de Liguilla no se califican en la quiniela de temporada regular.";
+            return response;
+        }
+
         var members = (await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId)).ToList();
         var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(weekId)).ToList();
         var weekPicks = (await _unitOfWork.Picks.GetAllPicksForWeekAsync(quinielaId, weekId)).ToList();
@@ -114,7 +122,7 @@ public class ScoringApplication : IScoringApplication
             .Where(p => p.Match?.Week?.SeasonId == week.SeasonId)
             .ToList();
 
-        bool isFootball = string.Equals(quiniela.League?.Sport?.Name, "Football", StringComparison.OrdinalIgnoreCase) 
+        bool isFootball = string.Equals(quiniela.League?.Sport?.Name, "Football", StringComparison.OrdinalIgnoreCase)
                        || string.Equals(quiniela.League?.Code, "nfl", StringComparison.OrdinalIgnoreCase);
 
         // 1. Evaluar aciertos, upsets y castigos
@@ -149,12 +157,7 @@ public class ScoringApplication : IScoringApplication
         // Solo con jornadas de la temporada en juego de la quiniela (la de sus picks más recientes):
         // recalificar una jornada histórica no debe sobrescribir los acumulados de la temporada en curso (H-009).
         var quinielaPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
-        var activeSeasonId = quinielaPicks
-            .Where(p => p.Match?.Week != null)
-            .OrderByDescending(p => p.Match.DateUtc)
-            .Select(p => (int?)p.Match.Week.SeasonId)
-            .FirstOrDefault();
-        bool isCurrentSeasonWeek = activeSeasonId == null || activeSeasonId == week.SeasonId;
+        bool isCurrentSeasonWeek = QuinielaSeasonResolver.AppliesToWeek(quinielaPicks, week);
 
         allHistoricalPicks = quinielaPicks
             .Where(p => p.Match?.Week?.SeasonId == week.SeasonId)

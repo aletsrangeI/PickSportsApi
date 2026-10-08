@@ -109,6 +109,31 @@ public class ScoringApplicationTests
         Assert.Equal(shouldUpdateMembers ? 1 : 7, member.TotalHits);
     }
 
+    [Fact]
+    public async Task ScoreWeekAsync_JornadaDeLiguilla_NoSeCalifica()
+    {
+        // Arrange: Liga MX con 17 jornadas regulares; se intenta calificar la J18
+        const int quinielaId = 10, leagueId = 5, adminUserId = 99;
+        var week = new Week { Id = 18, SeasonId = 2, WeekNumber = 18, Name = "Jornada 18", Status = "LOCKED" };
+
+        var unitOfWork = new Mock<IUnitOfWork> { DefaultValue = DefaultValue.Mock };
+        unitOfWork.Setup(u => u.Quinielas.GetAsync(quinielaId)).ReturnsAsync(new Quiniela { Id = quinielaId, LeagueId = leagueId });
+        unitOfWork.Setup(u => u.QuinielaMembers.GetMembershipAsync(quinielaId, adminUserId)).ReturnsAsync(new QuinielaMember { Id = 50, Role = "OWNER" });
+        unitOfWork.Setup(u => u.Weeks.GetAsync(week.Id)).ReturnsAsync(week);
+        unitOfWork.Setup(u => u.Leagues.GetAsync(leagueId)).ReturnsAsync(new League { Id = leagueId, WeeksCount = 17 });
+        var application = new ScoringApplication(unitOfWork.Object, new ScoringEngine());
+
+        // Act
+        var result = await application.ScoreWeekAsync(quinielaId, week.Id, adminUserId);
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Contains("Liguilla", result.Message);
+        Assert.Equal("LOCKED", week.Status);
+        unitOfWork.Verify(u => u.Picks.UpsertPickAsync(It.IsAny<Pick>()), Times.Never);
+        unitOfWork.Verify(u => u.WeeklyAwards.InsertAsync(It.IsAny<WeeklyAward>()), Times.Never);
+    }
+
     private static Mock<IUnitOfWork> CreateUnitOfWork(
         Week week,
         IEnumerable<QuinielaMember> members,

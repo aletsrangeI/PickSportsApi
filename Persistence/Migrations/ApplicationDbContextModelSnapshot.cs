@@ -362,6 +362,14 @@ namespace Persistence.Migrations
                     b.Property<int>("AwayTeamId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("Broadcasters")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<string>("BroadcastersSource")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
                     b.Property<string>("City")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
