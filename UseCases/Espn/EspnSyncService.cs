@@ -2,6 +2,7 @@ using Common;
 using Domain.Entities;
 using Interface.Persistence;
 using Interface.UseCases;
+using UseCases.Broadcasters;
 
 namespace UseCases.Espn;
 
@@ -18,17 +19,20 @@ public class EspnSyncService : IEspnSyncService
     private readonly IUnitOfWork          _unitOfWork;
     private readonly EspnScoreboardParser _parser;
     private readonly IAppLogger<EspnSyncService> _logger;
+    private readonly BroadcastRuleEngine  _broadcastRules;
 
     public EspnSyncService(
         IHttpClientFactory httpClientFactory,
         IUnitOfWork unitOfWork,
         EspnScoreboardParser parser,
-        IAppLogger<EspnSyncService> logger)
+        IAppLogger<EspnSyncService> logger,
+        BroadcastRuleEngine broadcastRules)
     {
         _httpClientFactory = httpClientFactory;
         _unitOfWork        = unitOfWork;
         _parser            = parser;
         _logger            = logger;
+        _broadcastRules    = broadcastRules;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -439,6 +443,7 @@ public class EspnSyncService : IEspnSyncService
     {
         var matchesUpserted = 0;
         var teamsUpserted   = 0;
+        var isLigaMx        = BroadcastChannelCatalog.IsLigaMx(league);
 
         foreach (var game in games)
         {
@@ -472,6 +477,9 @@ public class EspnSyncService : IEspnSyncService
                     Venue           = game.Venue,
                     City            = game.City,
                     LastSyncUtc     = DateTime.UtcNow,
+                    // SPEC-015: canales por localía al crear el partido
+                    Broadcasters       = isLigaMx ? DefaultBroadcastersFor(homeTeam) : null,
+                    BroadcastersSource = isLigaMx ? BroadcastChannelCatalog.SourceRule : null,
                     Active          = true,
                     Created         = DateTime.UtcNow
                 });
@@ -487,6 +495,13 @@ public class EspnSyncService : IEspnSyncService
                 existing.Venue           = game.Venue;
                 existing.City            = game.City;
                 existing.LastSyncUtc     = DateTime.UtcNow;
+
+                // SPEC-015: completar canales faltantes sin pisar señales oficiales ni manuales
+                if (isLigaMx && existing.Broadcasters == null)
+                {
+                    existing.Broadcasters       = DefaultBroadcastersFor(homeTeam);
+                    existing.BroadcastersSource = BroadcastChannelCatalog.SourceRule;
+                }
 
                 // REGLA CRÍTICA: si está pospuesto no tocar scores ni WinnerAbbr
                 if (game.StatusState != "postponed")
@@ -509,6 +524,9 @@ public class EspnSyncService : IEspnSyncService
         await _unitOfWork.Save();
         return (matchesUpserted, teamsUpserted);
     }
+
+    private string DefaultBroadcastersFor(Team homeTeam) =>
+        BroadcastChannelCatalog.Serialize(_broadcastRules.Resolve(homeTeam.Abbreviation));
 
     private async Task<Team?> UpsertTeamAsync(ParsedTeam pt, int leagueId)
     {

@@ -17,6 +17,12 @@ public class League : BaseAuditableEntity
     /// <summary>Clave del deporte para construir URLs ESPN: "soccer" | "football".</summary>
     public string SportKey { get; set; } = "soccer";
 
+    /// <summary>
+    /// Indica si la jornada pertenece a la fase final (Liguilla/Playoffs): su número supera las jornadas regulares.
+    /// Las quinielas de temporada regular no publican, autollenan ni califican estas jornadas (SPEC-020).
+    /// </summary>
+    public bool IsPlayoffWeek(int weekNumber) => WeeksCount > 0 && weekNumber > WeeksCount;
+
     public Sport Sport { get; set; } = null!;
     public ICollection<Team> Teams { get; set; } = new List<Team>();
     public ICollection<Season> Seasons { get; set; } = new List<Season>();

@@ -18,4 +18,6 @@ public class MatchDto
     public string? Venue { get; set; }
     public string? City { get; set; }
     public DateTime LastSyncUtc { get; set; }
+    /// <summary>SPEC-015: canales/plataformas de transmisión ("Dónde Ver").</summary>
+    public List<string> Broadcasters { get; set; } = new();
 }

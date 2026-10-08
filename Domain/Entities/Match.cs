@@ -24,6 +24,13 @@ public class Match : BaseAuditableEntity
     /// Estados válidos: "pre" | "in" | "post" | "postponed"
     /// </summary>
     public DateTime? PostponedToDate { get; set; }
+    /// <summary>
+    /// SPEC-015: canales y plataformas donde se transmite el partido, serializados como JSON
+    /// (ej. ["Canal 5","TUDN","ViX Premium"]). Null = sin información.
+    /// </summary>
+    public string? Broadcasters { get; set; }
+    /// <summary>Origen de <see cref="Broadcasters"/>: "RULE" | "LIGAMX" | "MANUAL".</summary>
+    public string? BroadcastersSource { get; set; }
 
     public Week Week { get; set; } = null!;
     public Team HomeTeam { get; set; } = null!;

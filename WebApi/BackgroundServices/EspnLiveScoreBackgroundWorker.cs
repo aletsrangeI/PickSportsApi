@@ -3,6 +3,7 @@ using Domain.Entities;
 using DTO.Notifications;
 using Interface.Persistence;
 using Interface.UseCases;
+using UseCases.Scoring;
 
 namespace WebApi.BackgroundServices;
 
@@ -92,8 +93,11 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
 
         foreach (var season in seasons)
         {
+            // Las jornadas de Liguilla/Playoffs no se procesan para quinielas de temporada regular (SPEC-020)
+            var seasonLeague = await unitOfWork.Leagues.GetAsync(season.LeagueId);
             var weeks = (await unitOfWork.Weeks.GetBySeasonIdAsync(season.Id))
                 .Where(w => w.Active && (w.Status == "PUBLISHED" || w.Status == "LOCKED"))
+                .Where(w => seasonLeague?.IsPlayoffWeek(w.WeekNumber) != true)
                 .ToList();
 
             foreach (var week in weeks)
@@ -212,6 +216,31 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         return hasActiveMatches;
     }
 
+    /// <summary>
+    /// Quinielas activas de la liga a las que aplica la jornada: solo las de su misma temporada en juego,
+    /// para no autollenar, notificar ni calificar jornadas de otra temporada (H-010).
+    /// </summary>
+    private async Task<List<Quiniela>> GetQuinielasForWeekAsync(Week week, Season season, IUnitOfWork unitOfWork)
+    {
+        var leagueQuinielas = (await unitOfWork.Quinielas.GetByLeagueIdAsync(season.LeagueId)).Where(q => q.IsActive).ToList();
+        var result = new List<Quiniela>();
+
+        foreach (var quiniela in leagueQuinielas)
+        {
+            var quinielaPicks = await unitOfWork.Picks.GetAllPicksForQuinielaAsync(quiniela.Id);
+            if (QuinielaSeasonResolver.AppliesToWeek(quinielaPicks, week))
+            {
+                result.Add(quiniela);
+            }
+            else
+            {
+                _logger.LogInformation("[EspnLiveWorker] Quiniela ID={0} omitida: la jornada {1} (ID={2}) es de otra temporada.", quiniela.Id, week.WeekNumber, week.Id);
+            }
+        }
+
+        return result;
+    }
+
     private async Task LockWeekAndAutofillAsync(
         Week week,
         Season season,
@@ -225,8 +254,8 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         unitOfWork.Weeks.Update(week);
         await unitOfWork.Save(ct);
 
-        // Quinielas asociadas a la temporada o liga
-        var quinielas = (await unitOfWork.Quinielas.GetByLeagueIdAsync(season.LeagueId)).Where(q => q.IsActive).ToList();
+        // Quinielas activas de la liga cuya temporada en juego es la de esta jornada
+        var quinielas = await GetQuinielasForWeekAsync(week, season, unitOfWork);
         var matches = (await unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
         var league = await unitOfWork.Leagues.GetAsync(season.LeagueId);
         var sport = league != null ? await unitOfWork.Sports.GetAsync(league.SportId) : null;
@@ -429,7 +458,7 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
     {
         _logger.LogInformation("[EspnLiveWorker] Concluyendo y calificando jornada {0} (ID={1}).", week.WeekNumber, week.Id);
 
-        var quinielas = (await unitOfWork.Quinielas.GetByLeagueIdAsync(season.LeagueId)).Where(q => q.IsActive).ToList();
+        var quinielas = await GetQuinielasForWeekAsync(week, season, unitOfWork);
 
         foreach (var quiniela in quinielas)
         {
@@ -467,8 +496,14 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
             var nextWeekNumber = week.WeekNumber + 1;
             var seasonWeeks = (await unitOfWork.Weeks.GetBySeasonIdAsync(season.Id)).ToList();
             var nextWeek = seasonWeeks.FirstOrDefault(w => w.WeekNumber == nextWeekNumber);
+            var league = await unitOfWork.Leagues.GetAsync(season.LeagueId);
 
-            if (nextWeek != null && string.Equals(nextWeek.Status, "DRAFT", StringComparison.OrdinalIgnoreCase))
+            if (nextWeek != null && league?.IsPlayoffWeek(nextWeek.WeekNumber) == true)
+            {
+                // Fin de la temporada regular: la Liguilla se juega aparte (SPEC-017), no se publica para picks
+                _logger.LogInformation("[EspnLiveWorker] Jornada {0} es de Liguilla: no se publica (fin de temporada regular).", nextWeek.WeekNumber);
+            }
+            else if (nextWeek != null && string.Equals(nextWeek.Status, "DRAFT", StringComparison.OrdinalIgnoreCase))
             {
                 nextWeek.Status = "PUBLISHED";
                 nextWeek.PublishedAt = DateTime.UtcNow;

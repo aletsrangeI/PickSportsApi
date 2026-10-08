@@ -4,6 +4,7 @@ using DTO.Espn;
 using DTO.Pick;
 using Interface.Persistence;
 using Interface.UseCases;
+using UseCases.Broadcasters;
 using Validator.Pick;
 
 namespace UseCases.Picks;
@@ -71,6 +72,15 @@ public class PickApplication : IPickApplication
             return response;
         }
 
+        // Regla: Las jornadas de Liguilla no forman parte de la quiniela de temporada regular (SPEC-020)
+        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        if (league?.IsPlayoffWeek(week.WeekNumber) == true)
+        {
+            response.isSuccess = false;
+            response.Message = "Los partidos de Liguilla no forman parte de esta quiniela.";
+            return response;
+        }
+
         // Regla: Jornada ya en LOCKED o SCORED
         if (week.Status == "LOCKED" || week.Status == "SCORED")
         {
@@ -102,7 +112,6 @@ public class PickApplication : IPickApplication
         }
 
         // 6. Validar opción de selección según deporte (HasDraw)
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
         var sport = league != null ? await _unitOfWork.Sports.GetAsync(league.SportId) : null;
         bool allowsDraw = sport?.HasDraw ?? true;
 
@@ -264,6 +273,7 @@ public class PickApplication : IPickApplication
             Venue = m.Venue,
             City = m.City,
             LastSyncUtc = DateTime.SpecifyKind(m.LastSyncUtc, DateTimeKind.Utc),
+            Broadcasters = BroadcastChannelCatalog.Deserialize(m.Broadcasters),
             HomeTeam = new TeamDto
             {
                 Id = m.HomeTeam.Id,
@@ -392,6 +402,15 @@ public class PickApplication : IPickApplication
             return response;
         }
 
+        // Las jornadas de Liguilla no se bloquean ni autollenan en la quiniela de temporada regular (SPEC-020)
+        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        if (league?.IsPlayoffWeek(week.WeekNumber) == true)
+        {
+            response.isSuccess = false;
+            response.Message = "Las jornadas de Liguilla no se autollenan en la quiniela de temporada regular.";
+            return response;
+        }
+
         // 3. Forzar bloqueo si aún no estaba bloqueada
         if (week.Status != "LOCKED" && week.Status != "SCORED")
         {
@@ -402,7 +421,6 @@ public class PickApplication : IPickApplication
         }
 
         // 4. Reglas deportivas
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
         var sport = league != null ? await _unitOfWork.Sports.GetAsync(league.SportId) : null;
         bool allowsDraw = sport?.HasDraw ?? true;
 
