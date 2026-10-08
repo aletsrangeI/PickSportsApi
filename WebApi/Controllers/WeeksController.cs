@@ -1,9 +1,11 @@
+using System.Security.Claims;
 using Common;
 using DTO.Espn;
 using Interface.Persistence;
 using Interface.UseCases;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using UseCases.Broadcasters;
 
 namespace WebApi.Controllers;
 
@@ -14,11 +16,20 @@ public class WeeksController : ControllerBase
 {
     private readonly IUnitOfWork     _unitOfWork;
     private readonly IEspnSyncService _espnSync;
+    private readonly IBroadcastService _broadcastService;
 
-    public WeeksController(IUnitOfWork unitOfWork, IEspnSyncService espnSync)
+    public WeeksController(IUnitOfWork unitOfWork, IEspnSyncService espnSync, IBroadcastService broadcastService)
     {
-        _unitOfWork = unitOfWork;
-        _espnSync   = espnSync;
+        _unitOfWork       = unitOfWork;
+        _espnSync         = espnSync;
+        _broadcastService = broadcastService;
+    }
+
+    private int GetCurrentUserId()
+    {
+        var claim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                    ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        return int.TryParse(claim, out var id) ? id : 0;
     }
 
     /// <summary>GET /api/weeks/{id}/matches — partidos de una jornada.</summary>
@@ -42,6 +53,7 @@ public class WeeksController : ControllerBase
             Venue       = m.Venue,
             City        = m.City,
             LastSyncUtc = DateTime.SpecifyKind(m.LastSyncUtc, DateTimeKind.Utc),
+            Broadcasters = BroadcastChannelCatalog.Deserialize(m.Broadcasters),
             HomeTeam = new TeamDto
             {
                 Id           = m.HomeTeam.Id,
@@ -92,6 +104,22 @@ public class WeeksController : ControllerBase
             Message   = $"Jornada sincronizada. {result.MatchesUpserted} partidos actualizados.",
             Data      = result
         });
+    }
+
+    /// <summary>
+    /// POST /api/weeks/{id}/sync-broadcasters — reaplica la regla de localía y confirma señales
+    /// contra ligamx.net (SPEC-015). Los overrides manuales del admin se preservan.
+    /// </summary>
+    [HttpPost("{id}/sync-broadcasters")]
+    public async Task<IActionResult> SyncBroadcasters(int id, CancellationToken ct)
+    {
+        var userId = GetCurrentUserId();
+        if (userId <= 0) return Unauthorized();
+
+        var response = await _broadcastService.SyncWeekBroadcastersAsync(id, userId, ct);
+        if (!response.isSuccess) return BadRequest(response);
+
+        return Ok(response);
     }
 
     /// <summary>POST /api/weeks/{id}/import-manual-json — importa JSON pegado manualmente.</summary>

@@ -17,6 +17,14 @@ public class MatchRepository : GenericRepository<Match>, IMatchRepository
             .FirstOrDefaultAsync(m => m.EspnGameId == espnGameId);
     }
 
+    public async Task<Match?> GetByIdWithTeamsAsync(int id)
+    {
+        return await _dbSet
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .FirstOrDefaultAsync(m => m.Id == id);
+    }
+
     public async Task<IEnumerable<Match>> GetByWeekIdAsync(int weekId)
     {
         return await _dbSet.AsNoTracking()

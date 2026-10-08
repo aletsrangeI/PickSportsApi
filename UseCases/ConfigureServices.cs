@@ -46,6 +46,8 @@ public static class ConfigureServices
         services.AddScoped<IQuinielaReminderApplication, UseCases.Notifications.QuinielaReminderApplication>();
         services.AddScoped<IXlsxParserService, UseCases.Migration.ClosedXmlParserService>();
         services.AddScoped<IQuinielaMigrationService, UseCases.Migration.QuinielaMigrationService>();
+        services.AddSingleton<UseCases.Broadcasters.BroadcastRuleEngine>();
+        services.AddScoped<IBroadcastService, UseCases.Broadcasters.BroadcastService>();
 
         // Validators
         services.AddTransient<RegisterRequestDtoValidator>();

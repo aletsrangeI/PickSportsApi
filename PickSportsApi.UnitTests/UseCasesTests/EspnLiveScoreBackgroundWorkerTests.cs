@@ -331,4 +331,101 @@ public class EspnLiveScoreBackgroundWorkerTests
             It.Is<PushNotificationPayload>(p => p.Title.Contains("disponible")),
             default), Times.Once);
     }
+
+    [Fact]
+    public async Task ProcessAutomationCycle_AlCalificarLaUltimaJornadaRegular_NoPublicaLaJornadaDeLiguilla()
+    {
+        // Arrange: Liga MX con 17 jornadas regulares; la J18 (Liguilla) llegó del sync en DRAFT
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        var season = new Season { Id = 1, LeagueId = 10, Active = true };
+        var lastRegularWeek = new Week { Id = 117, SeasonId = 1, WeekNumber = 17, Status = "LOCKED", Active = true };
+        var liguillaWeek = new Week { Id = 118, SeasonId = 1, WeekNumber = 18, Status = "DRAFT", Active = true };
+        var quiniela = new Quiniela { Id = 50, LeagueId = 10, OwnerId = 999, Active = true, Name = "Liga Master" };
+
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockLeagues.Setup(l => l.GetAsync(10)).ReturnsAsync(new League { Id = 10, WeeksCount = 17 });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week> { lastRegularWeek, liguillaWeek });
+        _mockMatches.Setup(m => m.GetByWeekIdAsync(117)).ReturnsAsync(new List<DbMatch> { new() { Id = 1, WeekId = 117, StatusState = "post", Active = true } });
+        _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockScoringApp.Setup(s => s.ScoreWeekAsync(50, 117, 999))
+            .ReturnsAsync(new Response<ScoreWeekResultDto> { isSuccess = true });
+
+        // Act
+        await worker.ProcessAutomationCycleAsync(_mockUow.Object, _mockEspnSync.Object, _mockWebPush.Object, _mockScoringApp.Object, default);
+
+        // Assert: la J17 se califica, la J18 queda en DRAFT sin sync ni push de "disponible"
+        Assert.Equal("SCORED", lastRegularWeek.Status);
+        _mockScoringApp.Verify(s => s.ScoreWeekAsync(50, 117, 999), Times.Once);
+        Assert.Equal("DRAFT", liguillaWeek.Status);
+        Assert.Null(liguillaWeek.PublishedAt);
+        _mockEspnSync.Verify(e => e.SyncWeekAsync(118, It.IsAny<CancellationToken>()), Times.Never);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            It.IsAny<int>(),
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("disponible")),
+            default), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessAutomationCycle_JornadaDeLiguillaPublicada_NoSeBloqueaNiAutollena()
+    {
+        // Arrange: una jornada de Liguilla quedó PUBLISHED (p. ej. por un cambio manual) y su primer partido ya arrancó
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        var season = new Season { Id = 1, LeagueId = 10, Active = true };
+        var liguillaWeek = new Week { Id = 118, SeasonId = 1, WeekNumber = 18, Status = "PUBLISHED", FirstGameUtc = DateTime.UtcNow.AddMinutes(-5), Active = true };
+        var quiniela = new Quiniela { Id = 50, LeagueId = 10, Active = true, Name = "Liga Master" };
+
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockLeagues.Setup(l => l.GetAsync(10)).ReturnsAsync(new League { Id = 10, WeeksCount = 17 });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week> { liguillaWeek });
+        _mockMatches.Setup(m => m.GetByWeekIdAsync(118)).ReturnsAsync(new List<DbMatch> { new() { Id = 1, WeekId = 118, StatusState = "in", Active = true } });
+        _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quiniela });
+
+        // Act
+        await worker.ProcessAutomationCycleAsync(_mockUow.Object, _mockEspnSync.Object, _mockWebPush.Object, _mockScoringApp.Object, default);
+
+        // Assert
+        Assert.Equal("PUBLISHED", liguillaWeek.Status);
+        _mockPicks.Verify(p => p.InsertAsync(It.IsAny<Pick>()), Times.Never);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(It.IsAny<int>(), It.IsAny<PushNotificationPayload>(), default), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessAutomationCycle_JornadaDeOtraTemporada_SoloAutollenaQuinielasDeEsaTemporada()
+    {
+        // Arrange: arranca una jornada de la temporada 1. La quiniela 50 juega la temporada 3 (H-010);
+        // la quiniela 60 aún no tiene picks.
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        var season = new Season { Id = 1, LeagueId = 10, Active = true };
+        var week = new Week { Id = 110, SeasonId = 1, WeekNumber = 10, Status = "PUBLISHED", FirstGameUtc = DateTime.UtcNow.AddMinutes(-5), Active = true };
+        var quinielaOtraTemporada = new Quiniela { Id = 50, LeagueId = 10, Active = true, Name = "Liga MX Apertura" };
+        var quinielaNueva = new Quiniela { Id = 60, LeagueId = 10, Active = true, Name = "Quiniela Nueva" };
+        var match = new DbMatch { Id = 1001, WeekId = 110, StatusState = "in", HomeTeam = new Team { Abbreviation = "AME" }, AwayTeam = new Team { Abbreviation = "CHI" }, Active = true };
+
+        var aperturaWeek = new Week { Id = 311, SeasonId = 3, WeekNumber = 11 };
+        var aperturaPick = new Pick { QuinielaId = 50, MemberId = 200, MatchId = 3001, Match = new DbMatch { Id = 3001, Week = aperturaWeek, DateUtc = DateTime.UtcNow.AddDays(1) } };
+
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockLeagues.Setup(l => l.GetAsync(10)).ReturnsAsync(new League { Id = 10, WeeksCount = 17 });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week> { week });
+        _mockMatches.Setup(m => m.GetByWeekIdAsync(110)).ReturnsAsync(new List<DbMatch> { match });
+        _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quinielaOtraTemporada, quinielaNueva });
+        _mockPicks.Setup(p => p.GetAllPicksForQuinielaAsync(50)).ReturnsAsync(new List<Pick> { aperturaPick });
+        _mockPicks.Setup(p => p.GetAllPicksForQuinielaAsync(60)).ReturnsAsync(new List<Pick>());
+        _mockMembers.Setup(m => m.GetMembersAsync(50)).ReturnsAsync(new List<QuinielaMember> { new() { Id = 200, QuinielaId = 50, Active = true } });
+        _mockMembers.Setup(m => m.GetMembersAsync(60)).ReturnsAsync(new List<QuinielaMember> { new() { Id = 300, QuinielaId = 60, Active = true } });
+        _mockPicks.Setup(p => p.GetAllPicksForWeekAsync(It.IsAny<int>(), 110)).ReturnsAsync(new List<Pick>());
+        _mockUow.Setup(u => u.Sports.GetAsync(It.IsAny<int>())).ReturnsAsync(new Sport { HasDraw = true });
+
+        // Act
+        await worker.ProcessAutomationCycleAsync(_mockUow.Object, _mockEspnSync.Object, _mockWebPush.Object, _mockScoringApp.Object, default);
+
+        // Assert: la quiniela 50 no recibe picks ni push; la 60 sí
+        _mockPicks.Verify(p => p.InsertAsync(It.Is<Pick>(pick => pick.QuinielaId == 50)), Times.Never);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(50, It.IsAny<PushNotificationPayload>(), default), Times.Never);
+        _mockPicks.Verify(p => p.InsertAsync(It.Is<Pick>(pick => pick.QuinielaId == 60 && pick.IsAutoFilled)), Times.Once);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(60, It.Is<PushNotificationPayload>(p => p.Title.Contains("bloqueada")), default), Times.Once);
+    }
 }

@@ -141,6 +141,7 @@ public class PickApplicationTests
         _unitOfWorkMock.Setup(u => u.Quinielas.GetAsync(quinielaId)).ReturnsAsync(quiniela);
         _unitOfWorkMock.Setup(u => u.Matches.GetAsync(matchId)).ReturnsAsync(match);
         _unitOfWorkMock.Setup(u => u.Weeks.GetAsync(weekId)).ReturnsAsync(week);
+        _unitOfWorkMock.Setup(u => u.Leagues.GetAsync(It.IsAny<int>())).ReturnsAsync(new League { Id = 1, WeeksCount = 17 });
 
         var request = new SubmitPickRequestDto { MatchId = matchId, PickAbbr = "AME" };
 
@@ -176,6 +177,7 @@ public class PickApplicationTests
         _unitOfWorkMock.Setup(u => u.Quinielas.GetAsync(quinielaId)).ReturnsAsync(quiniela);
         _unitOfWorkMock.Setup(u => u.Matches.GetAsync(matchId)).ReturnsAsync(match);
         _unitOfWorkMock.Setup(u => u.Weeks.GetAsync(weekId)).ReturnsAsync(week);
+        _unitOfWorkMock.Setup(u => u.Leagues.GetAsync(It.IsAny<int>())).ReturnsAsync(new League { Id = 1, WeeksCount = 17 });
 
         var request = new SubmitPickRequestDto { MatchId = matchId, PickAbbr = "AME" };
 
@@ -373,5 +375,56 @@ public class PickApplicationTests
         Assert.True(result.Data.IsRevealed);
         Assert.True(result.Data.IsLocked);
         Assert.Equal(2, result.Data.Picks.Count());
+    }
+
+    [Fact]
+    public async Task SubmitPickAsync_JornadaDeLiguilla_RechazaElPick()
+    {
+        // Arrange: Liga MX con 17 jornadas regulares; el partido pertenece a la J18 (Liguilla)
+        int quinielaId = 1, userId = 10, matchId = 100, weekId = 18;
+        var membership = new QuinielaMember { Id = 42, QuinielaId = quinielaId, UserId = userId };
+        var quiniela = new Quiniela { Id = quinielaId, LeagueId = 1, Active = true };
+        var match = new MatchEntity { Id = matchId, WeekId = weekId, StatusState = "pre", DateUtc = DateTime.UtcNow.AddDays(2) };
+        var week = new Week { Id = weekId, WeekNumber = 18, Status = "PUBLISHED", FirstGameUtc = DateTime.UtcNow.AddDays(2) };
+
+        _unitOfWorkMock.Setup(u => u.QuinielaMembers.GetMembershipAsync(quinielaId, userId)).ReturnsAsync(membership);
+        _unitOfWorkMock.Setup(u => u.Quinielas.GetAsync(quinielaId)).ReturnsAsync(quiniela);
+        _unitOfWorkMock.Setup(u => u.Matches.GetAsync(matchId)).ReturnsAsync(match);
+        _unitOfWorkMock.Setup(u => u.Weeks.GetAsync(weekId)).ReturnsAsync(week);
+        _unitOfWorkMock.Setup(u => u.Leagues.GetAsync(1)).ReturnsAsync(new League { Id = 1, WeeksCount = 17 });
+
+        // Act
+        var result = await _pickApplication.SubmitPickAsync(quinielaId, userId, new SubmitPickRequestDto { MatchId = matchId, PickAbbr = "AME" });
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Contains("Liguilla", result.Message);
+        _unitOfWorkMock.Verify(u => u.Picks.InsertAsync(It.IsAny<Pick>()), Times.Never);
+        _unitOfWorkMock.Verify(u => u.Weeks.Update(It.IsAny<Week>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LockAndAutofillAsync_JornadaDeLiguilla_NoBloqueaNiAutollena()
+    {
+        // Arrange
+        int quinielaId = 1, weekId = 18, adminUserId = 99;
+        var week = new Week { Id = weekId, WeekNumber = 18, Status = "PUBLISHED" };
+
+        _unitOfWorkMock.Setup(u => u.QuinielaMembers.GetMembershipAsync(quinielaId, adminUserId))
+            .ReturnsAsync(new QuinielaMember { Id = 1, QuinielaId = quinielaId, UserId = adminUserId, Role = "OWNER" });
+        _unitOfWorkMock.Setup(u => u.Users.GetAsync(adminUserId)).ReturnsAsync(new User { Id = adminUserId, Role = "USER" });
+        _unitOfWorkMock.Setup(u => u.Quinielas.GetAsync(quinielaId)).ReturnsAsync(new Quiniela { Id = quinielaId, LeagueId = 1, Active = true });
+        _unitOfWorkMock.Setup(u => u.Weeks.GetAsync(weekId)).ReturnsAsync(week);
+        _unitOfWorkMock.Setup(u => u.Leagues.GetAsync(1)).ReturnsAsync(new League { Id = 1, WeeksCount = 17 });
+
+        // Act
+        var result = await _pickApplication.LockAndAutofillAsync(quinielaId, weekId, adminUserId);
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Contains("Liguilla", result.Message);
+        Assert.Equal("PUBLISHED", week.Status);
+        _unitOfWorkMock.Verify(u => u.Weeks.Update(It.IsAny<Week>()), Times.Never);
+        _unitOfWorkMock.Verify(u => u.Picks.InsertMissingAutoFilledPicksAsync(It.IsAny<IEnumerable<Pick>>()), Times.Never);
     }
 }
