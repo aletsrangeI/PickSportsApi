@@ -273,7 +273,8 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
             // Filtrar partidos que se juegan HOY en hora de México
             var matchesToday = matches.Where(m =>
             {
-                var matchLocal = TimeZoneInfo.ConvertTimeFromUtc(m.DateUtc, tz);
+                var dtUtc = DateTime.SpecifyKind(m.DateUtc, DateTimeKind.Utc);
+                var matchLocal = TimeZoneInfo.ConvertTimeFromUtc(dtUtc, tz);
                 return matchLocal.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) == todayDateStr;
             }).OrderBy(m => m.DateUtc).ToList();
 
@@ -383,7 +384,7 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
             if (matches.Count == 0) continue;
 
             var firstMatch = matches.First();
-            var firstGameUtc = week.FirstGameUtc ?? firstMatch.DateUtc;
+            var firstGameUtc = DateTime.SpecifyKind(week.FirstGameUtc ?? firstMatch.DateUtc, DateTimeKind.Utc);
 
             var timeUntilKickoff = firstGameUtc - nowUtc;
             // Ventana: Faltan entre 0 y 65 minutos para el inicio del primer juego
