@@ -292,13 +292,12 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
             if (alreadySentToday) continue;
 
             // Construir lista amigable de partidos con nombres reales de equipos
-            var ci = new CultureInfo("es-MX");
             var matchSummaries = matchesToday.Select(m =>
             {
                 var home = !string.IsNullOrWhiteSpace(m.HomeTeam?.Name) ? m.HomeTeam.Name : (m.HomeTeam?.Abbreviation ?? "Local");
                 var away = !string.IsNullOrWhiteSpace(m.AwayTeam?.Name) ? m.AwayTeam.Name : (m.AwayTeam?.Abbreviation ?? "Visita");
-                var matchLocal = TimeZoneInfo.ConvertTimeFromUtc(m.DateUtc, tz);
-                return $"{home} vs {away} ({matchLocal.ToString("HH:mm", ci)})";
+                var matchLocal = TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(m.DateUtc, DateTimeKind.Utc), tz);
+                return $"{home} vs {away} ({matchLocal.ToString("HH:mm", CultureInfo.InvariantCulture)})";
             }).ToList();
 
             string matchSentence;
