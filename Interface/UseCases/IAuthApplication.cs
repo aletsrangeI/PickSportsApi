@@ -14,4 +14,5 @@ public interface IAuthApplication
     Task<Response<AuthResponseDto>> LinkClaimedMemberForCurrentUserAsync(int currentUserId, string token);
     Task<Response<UserProfileDto>> UploadAvatarAsync(int userId, Stream fileStream, string fileName, string contentType, long fileLength, CancellationToken cancellationToken = default);
     Task<Response<UserProfileDto>> RemoveAvatarAsync(int userId, CancellationToken cancellationToken = default);
+    Task<Response<AuthResponseDto>> RefreshAsync(RefreshRequestDto request);
 }
