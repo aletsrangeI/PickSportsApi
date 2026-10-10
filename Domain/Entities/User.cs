@@ -18,6 +18,9 @@ public class User : BaseAuditableEntity
     public string? AvatarUrl { get; set; }
     public string Role { get; set; } = "USER"; // ADMIN, USER
     public string? Token { get; set; }
+    
+    public string? RefreshToken { get; set; }
+    public DateTime? RefreshTokenExpiryTime { get; set; }
 
     public ICollection<Quiniela> QuinielasOwned { get; set; } = new List<Quiniela>();
     public ICollection<QuinielaMember> Memberships { get; set; } = new List<QuinielaMember>();
