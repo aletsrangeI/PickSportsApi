@@ -202,4 +202,17 @@ public class AuthController : ControllerBase
         var contentType = _avatarStorageService.GetContentType(fileName);
         return PhysicalFile(filePath, contentType);
     }
+
+    [AllowAnonymous]
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh([FromBody] RefreshRequestDto request)
+    {
+        var response = await _authApplication.RefreshAsync(request);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
 }
