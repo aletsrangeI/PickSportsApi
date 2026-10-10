@@ -662,7 +662,7 @@ public class AuthApplication : IAuthApplication
         }
 
         var jwtToken = handler.ReadJwtToken(request.AccessToken);
-        var nameIdentifierClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier);
+        var nameIdentifierClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "nameid" || c.Type == "name");
         if (nameIdentifierClaim == null || !int.TryParse(nameIdentifierClaim.Value, out var userId))
         {
             response.isSuccess = false;
