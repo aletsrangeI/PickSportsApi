@@ -378,6 +378,17 @@ public class BulletinApplication : IBulletinApplication
             .Select(m => $"{m.HomeTeam?.DisplayName ?? m.HomeTeam?.Name ?? "Local"} {m.HomeScore} - {m.AwayScore} {m.AwayTeam?.DisplayName ?? m.AwayTeam?.Name ?? "Visita"}{(string.IsNullOrEmpty(m.WinnerAbbr) ? "" : $" (Gana {m.WinnerAbbr})")}{(string.IsNullOrEmpty(m.Venue) ? "" : $" [Estadio: {m.Venue}]")}")
             .ToList();
 
+        var seasonWeeks = (await _unitOfWork.Weeks.GetBySeasonIdAsync(week.SeasonId)).ToList();
+        var nextWeek = seasonWeeks.FirstOrDefault(w => w.WeekNumber == week.WeekNumber + 1);
+        var nextWeekMatchSummaries = new List<string>();
+        if (nextWeek != null)
+        {
+            var nextMatches = (await _unitOfWork.Matches.GetByWeekIdAsync(nextWeek.Id)).ToList();
+            nextWeekMatchSummaries = nextMatches
+                .Select(m => $"{m.HomeTeam?.DisplayName ?? m.HomeTeam?.Name ?? "Local"} vs {m.AwayTeam?.DisplayName ?? m.AwayTeam?.Name ?? "Visita"}{(string.IsNullOrEmpty(m.Venue) ? "" : $" [Estadio: {m.Venue}]")}")
+                .ToList();
+        }
+
         return new BulletinNarrativeContextDto
         {
             WeekNumber = week.WeekNumber,
@@ -394,7 +405,9 @@ public class BulletinApplication : IBulletinApplication
             Faller = radar?.Faller,
             Derbies = derbies,
             Streaks = streaks,
-            FinishedMatchSummaries = matchSummaries
+            FinishedMatchSummaries = matchSummaries,
+            NextWeekNumber = nextWeek?.WeekNumber,
+            NextWeekMatchSummaries = nextWeekMatchSummaries
         };
     }
 
