@@ -1353,12 +1353,24 @@ namespace Persistence.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("character varying(2000)");
 
+                    b.Property<string>("Chronicle")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("Created")
                         .HasColumnType("timestamp without time zone");
 
                     b.Property<string>("CreatedBy")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<bool>("GeneratedByAi")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Headline")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
 
                     b.Property<bool>("IsPublished")
                         .HasColumnType("boolean");
@@ -1369,6 +1381,10 @@ namespace Persistence.Migrations
                     b.Property<string>("LastModifiedBy")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("NarrativeModel")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.Property<DateTime>("PublishedAtUtc")
                         .HasColumnType("timestamp without time zone");

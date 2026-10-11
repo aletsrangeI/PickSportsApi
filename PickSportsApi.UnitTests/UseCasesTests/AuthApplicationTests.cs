@@ -400,4 +400,83 @@ public class AuthApplicationTests
         Assert.Null(user.AvatarUrl);
         avatarStorageMock.Verify(s => s.DeleteAvatarAsync("/api/auth/avatar/avatar_u15_old.png", It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task RefreshAsync_WithExpiredJwtAndValidRefreshToken_SuccessfullyReturnsNewTokens()
+    {
+        // Arrange - Setup real configuration and JwtTokenGenerator
+        var configMock = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
+        configMock.Setup(c => c["Config:Secret"]).Returns("eb52d4dded37971ce40e757f2ab4964d3a1cec349e3bd263a960bc197baa8bab");
+        configMock.Setup(c => c["Config:Issuer"]).Returns("OrionSys");
+        configMock.Setup(c => c["Config:Audience"]).Returns("OrionSys");
+
+        var realJwtGenerator = new UseCases.Security.JwtTokenGenerator(configMock.Object);
+
+        // Generate an already expired token (expired 5 minutes ago)
+        var secret = "eb52d4dded37971ce40e757f2ab4964d3a1cec349e3bd263a960bc197baa8bab";
+        var key = System.Text.Encoding.ASCII.GetBytes(secret);
+        var tokenHandler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+        var claims = new List<System.Security.Claims.Claim>
+        {
+            new(System.Security.Claims.ClaimTypes.NameIdentifier, "42"),
+            new(System.Security.Claims.ClaimTypes.Name, "42"),
+            new("username", "testuser"),
+            new(System.Security.Claims.ClaimTypes.Email, "test@test.com"),
+            new(System.Security.Claims.ClaimTypes.Role, "USER"),
+            new("displayName", "Test User")
+        };
+        var tokenDescriptor = new Microsoft.IdentityModel.Tokens.SecurityTokenDescriptor
+        {
+            Subject = new System.Security.Claims.ClaimsIdentity(claims),
+            NotBefore = DateTime.UtcNow.AddMinutes(-15),
+            IssuedAt = DateTime.UtcNow.AddMinutes(-15),
+            Expires = DateTime.UtcNow.AddMinutes(-5), // Expired!
+            SigningCredentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(
+                new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(key),
+                Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256Signature
+            ),
+            Issuer = "OrionSys",
+            Audience = "OrionSys"
+        };
+        var expiredToken = tokenHandler.WriteToken(tokenHandler.CreateToken(tokenDescriptor));
+
+        var refreshToken = "valid-refresh-token-xyz-123";
+        var user = new User
+        {
+            Id = 42,
+            Username = "testuser",
+            Email = "test@test.com",
+            DisplayName = "Test User",
+            RefreshToken = refreshToken,
+            RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7),
+            Active = true
+        };
+
+        _unitOfWorkMock.Setup(u => u.Users.GetAsync(42)).ReturnsAsync(user);
+        _unitOfWorkMock.Setup(u => u.Users.UpdateAsync(It.IsAny<User>())).ReturnsAsync(true);
+        _unitOfWorkMock.Setup(u => u.Save(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        var app = new AuthApplication(
+            _unitOfWorkMock.Object,
+            realJwtGenerator,
+            _passwordHasher,
+            _mapper,
+            _registerValidator,
+            _loginValidator);
+
+        // Act
+        var result = await app.RefreshAsync(new RefreshRequestDto
+        {
+            AccessToken = expiredToken,
+            RefreshToken = refreshToken
+        });
+
+        // Assert
+        Assert.True(result.isSuccess, $"Refresh failed with message: {result.Message}");
+        Assert.NotNull(result.Data);
+        Assert.False(string.IsNullOrWhiteSpace(result.Data.Token));
+        Assert.False(string.IsNullOrWhiteSpace(result.Data.RefreshToken));
+        Assert.NotEqual(refreshToken, result.Data.RefreshToken); // Rotated
+        Assert.Equal(42, result.Data.User.Id);
+    }
 }
