@@ -41,6 +41,9 @@ public static class ConfigureServices
         services.AddScoped<IScoringApplication, UseCases.Scoring.ScoringApplication>();
         services.AddScoped<IWhatsAppReportService, UseCases.Reports.WhatsAppReportService>();
         services.AddScoped<IBulletinApplication, UseCases.Bulletin.BulletinApplication>();
+        services.AddSingleton<UseCases.Bulletin.LeagueDerbyDetector>();
+        services.AddSingleton<UseCases.Bulletin.StreakCalculatorService>();
+        services.AddScoped<IBulletinNarrativeService, UseCases.Bulletin.GeminiBulletinNarrativeService>();
         services.AddScoped<IWebPushNotificationService, UseCases.Notifications.WebPushNotificationService>();
         services.AddScoped<INotificationsApplication, UseCases.Notifications.NotificationsApplication>();
         services.AddScoped<IQuinielaReminderApplication, UseCases.Notifications.QuinielaReminderApplication>();

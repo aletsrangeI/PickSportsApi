@@ -11,6 +11,10 @@ public class WeeklyBulletinConfiguration : IEntityTypeConfiguration<WeeklyBullet
         builder.ToTable("WeeklyBulletins");
         builder.HasKey(b => b.Id);
         builder.Property(b => b.AdminAnnouncement).HasMaxLength(2000);
+        builder.Property(b => b.Headline).HasMaxLength(300);
+        builder.Property(b => b.Chronicle).HasColumnType("text");
+        builder.Property(b => b.GeneratedByAi).HasDefaultValue(false);
+        builder.Property(b => b.NarrativeModel).HasMaxLength(100);
         builder.Property(b => b.PublishedAtUtc).IsRequired();
         builder.Property(b => b.IsPublished).IsRequired();
 

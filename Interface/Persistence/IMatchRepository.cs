@@ -7,5 +7,6 @@ public interface IMatchRepository : IGenericRepository<Match>
     Task<Match?> GetByEspnGameIdAsync(string espnGameId);
     Task<Match?> GetByIdWithTeamsAsync(int id);
     Task<IEnumerable<Match>> GetByWeekIdAsync(int weekId);
+    Task<IEnumerable<Match>> GetBySeasonIdAsync(int seasonId);
     Task<IEnumerable<Match>> GetLiveMatchesAsync();
 }

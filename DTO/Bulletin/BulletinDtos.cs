@@ -105,6 +105,10 @@ public class WeeklyBulletinDto
     public DateTime WeekEndDate { get; set; }
     public DateTime? PublishedAtUtc { get; set; }
     public string? AdminAnnouncement { get; set; }
+    public string? Headline { get; set; }
+    public string? Chronicle { get; set; }
+    public bool GeneratedByAi { get; set; }
+    public string? NarrativeModel { get; set; }
     public List<PodiumMemberDto> Podium { get; set; } = new();
     public BulletinAwardsDto Awards { get; set; } = new();
     public BulletinRadarDto? Radar { get; set; }
@@ -115,4 +119,10 @@ public class WeeklyBulletinDto
 public class UpdateAnnouncementDto
 {
     public string? Announcement { get; set; }
+}
+
+public class UpdateChronicleDto
+{
+    public string? Headline { get; set; }
+    public string? Chronicle { get; set; }
 }

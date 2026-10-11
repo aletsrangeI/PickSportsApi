@@ -35,6 +35,16 @@ public class MatchRepository : GenericRepository<Match>, IMatchRepository
             .ToListAsync();
     }
 
+    public async Task<IEnumerable<Match>> GetBySeasonIdAsync(int seasonId)
+    {
+        return await _dbSet.AsNoTracking()
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .Where(m => m.Week.SeasonId == seasonId)
+            .OrderBy(m => m.DateUtc)
+            .ToListAsync();
+    }
+
     public async Task<IEnumerable<Match>> GetLiveMatchesAsync()
     {
         return await _dbSet
