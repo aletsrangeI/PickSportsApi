@@ -257,6 +257,21 @@ public class GeminiBulletinNarrativeService : IBulletinNarrativeService
             }
         }
 
+        if (ctx.NextWeekNumber.HasValue && ctx.NextWeekMatchSummaries.Any())
+        {
+            sb.AppendLine();
+            sb.AppendLine($"CARTELERA DE LA SIGUIENTE JORNADA (Jornada {ctx.NextWeekNumber.Value}):");
+            foreach (var m in ctx.NextWeekMatchSummaries)
+            {
+                sb.AppendLine($"  * {m}");
+            }
+            sb.AppendLine();
+            sb.AppendLine("SECCIÓN OBLIGATORIA AL FINAL DE LA CRÓNICA:");
+            sb.AppendLine($"Al terminar la crónica de la jornada jugada, DEBES incluir obligatoriamente una sección final con el encabezado exacto: '### 🔭 A tener en cuenta para la Jornada {ctx.NextWeekNumber.Value}:'");
+            sb.AppendLine("- Destaca y analiza 2 o 3 partidos clave de esa cartelera (por ejemplo: clásicos, duelos en la cima, choque de sotaneros o visitas trampa).");
+            sb.AppendLine("- Explica qué está en juego deportivamente para esos equipos y da una advertencia o consejo futbolero a los quinieleros para armar sus picks.");
+        }
+
         sb.AppendLine();
         sb.AppendLine("RESPONDE EXCLUSIVAMENTE con un JSON válido con esta estructura:");
         sb.AppendLine("{");
@@ -335,6 +350,19 @@ public class GeminiBulletinNarrativeService : IBulletinNarrativeService
                 notes.Add($"y **{ctx.Humillado[0].Alias}** inauguró la Sala de la Infamia con una amarga goleada");
 
             sbBody.AppendLine($"En los movimientos de la tabla, {string.Join(", ", notes)}. La mesa queda servida para la próxima fecha donde nadie tiene el puesto asegurado.");
+        }
+
+        // Párrafo 5: A tener en cuenta para la siguiente jornada
+        if (ctx.NextWeekNumber.HasValue && ctx.NextWeekMatchSummaries.Any())
+        {
+            sbBody.AppendLine();
+            sbBody.AppendLine($"### 🔭 A tener en cuenta para la Jornada {ctx.NextWeekNumber.Value}:");
+            var previewMatches = ctx.NextWeekMatchSummaries.Take(3).ToList();
+            foreach (var match in previewMatches)
+            {
+                sbBody.AppendLine($"- **{match}**: Choque de alta tensión que pondrá a prueba la intuición de la quiniela.");
+            }
+            sbBody.AppendLine("- ¡Asegúrate de registrar tus pronósticos antes del silbatazo inicial del primer encuentro!");
         }
 
         return new BulletinNarrativeResultDto

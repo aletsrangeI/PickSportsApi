@@ -35,6 +35,8 @@ public class BulletinNarrativeContextDto
     public List<LeagueDerbyDto> Derbies { get; set; } = new();
     public List<TeamStreakDto> Streaks { get; set; } = new();
     public List<string> FinishedMatchSummaries { get; set; } = new();
+    public int? NextWeekNumber { get; set; }
+    public List<string> NextWeekMatchSummaries { get; set; } = new();
 }
 
 public class BulletinNarrativeResultDto
