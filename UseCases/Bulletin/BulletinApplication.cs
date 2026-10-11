@@ -14,11 +14,22 @@ public class BulletinApplication : IBulletinApplication
 
     private readonly IUnitOfWork _unitOfWork;
     private readonly ScoringEngine _scoringEngine;
+    private readonly IBulletinNarrativeService _narrativeService;
+    private readonly LeagueDerbyDetector _derbyDetector;
+    private readonly StreakCalculatorService _streakCalculator;
 
-    public BulletinApplication(IUnitOfWork unitOfWork, ScoringEngine scoringEngine)
+    public BulletinApplication(
+        IUnitOfWork unitOfWork,
+        ScoringEngine scoringEngine,
+        IBulletinNarrativeService narrativeService,
+        LeagueDerbyDetector derbyDetector,
+        StreakCalculatorService streakCalculator)
     {
         _unitOfWork = unitOfWork;
         _scoringEngine = scoringEngine;
+        _narrativeService = narrativeService;
+        _derbyDetector = derbyDetector;
+        _streakCalculator = streakCalculator;
     }
 
     public async Task<Response<WeeklyBulletinDto>> GetBulletinAsync(int quinielaId, int? weekId)
@@ -77,16 +88,33 @@ public class BulletinApplication : IBulletinApplication
         // Auto-publicación: en cuanto la jornada está calificada se emite la edición oficial
         if (bulletin == null)
         {
+            var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches);
+            var narrativeResult = await _narrativeService.GenerateChronicleAsync(narrativeContext);
+
             bulletin = new WeeklyBulletin
             {
                 QuinielaId = quinielaId,
                 WeekId = week.Id,
                 AdminAnnouncement = null,
+                Headline = narrativeResult.Headline,
+                Chronicle = narrativeResult.Chronicle,
+                GeneratedByAi = narrativeResult.GeneratedByAi,
+                NarrativeModel = narrativeResult.NarrativeModel,
                 PublishedAtUtc = week.ScoredAt ?? DateTime.UtcNow,
                 IsPublished = true,
                 Active = true
             };
             await _unitOfWork.WeeklyBulletins.InsertAsync(bulletin);
+        }
+        else if (string.IsNullOrWhiteSpace(bulletin.Chronicle))
+        {
+            var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches);
+            var narrativeResult = await _narrativeService.GenerateChronicleAsync(narrativeContext);
+            bulletin.Headline = narrativeResult.Headline;
+            bulletin.Chronicle = narrativeResult.Chronicle;
+            bulletin.GeneratedByAi = narrativeResult.GeneratedByAi;
+            bulletin.NarrativeModel = narrativeResult.NarrativeModel;
+            await _unitOfWork.WeeklyBulletins.UpdateAsync(bulletin);
         }
 
         var nextWeekInfo = await BuildNextWeekInfoAsync(week);
@@ -104,6 +132,10 @@ public class BulletinApplication : IBulletinApplication
             WeekEndDate = week.EndDate,
             PublishedAtUtc = bulletin?.IsPublished == true ? bulletin.PublishedAtUtc : null,
             AdminAnnouncement = bulletin?.AdminAnnouncement,
+            Headline = bulletin?.Headline,
+            Chronicle = bulletin?.Chronicle,
+            GeneratedByAi = bulletin?.GeneratedByAi ?? false,
+            NarrativeModel = bulletin?.NarrativeModel,
             Podium = podium,
             Awards = awards,
             Radar = radar,
@@ -194,6 +226,176 @@ public class BulletinApplication : IBulletinApplication
             : bulletinResponse.Message;
 
         return bulletinResponse;
+    }
+
+    public async Task<Response<WeeklyBulletinDto>> RegenerateChronicleAsync(int quinielaId, int weekId, int userId)
+    {
+        var response = new Response<WeeklyBulletinDto>();
+
+        var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
+        if (quiniela == null)
+        {
+            response.isSuccess = false;
+            response.Message = "Quiniela no encontrada.";
+            return response;
+        }
+
+        var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
+        if (membership == null || (membership.Role != "ADMIN" && membership.Role != "OWNER"))
+        {
+            response.isSuccess = false;
+            response.Message = "Solo los administradores u owners pueden regenerar la crónica.";
+            return response;
+        }
+
+        var week = await _unitOfWork.Weeks.GetAsync(weekId);
+        if (week == null)
+        {
+            response.isSuccess = false;
+            response.Message = "Jornada no encontrada.";
+            return response;
+        }
+
+        if (!string.Equals(week.Status, "SCORED", StringComparison.OrdinalIgnoreCase))
+        {
+            response.isSuccess = false;
+            response.Message = "El boletín solo está disponible para jornadas concluidas y calificadas.";
+            return response;
+        }
+
+        var members = (await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId)).ToList();
+        var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
+        var weekPicks = (await _unitOfWork.Picks.GetAllPicksForWeekAsync(quinielaId, week.Id)).ToList();
+        var allPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
+
+        var standings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches);
+        var allAwards = await _unitOfWork.WeeklyAwards.GetAllAwardsForQuinielaAsync(quinielaId);
+        var generalStandings = _scoringEngine.CalculateGeneralStandings(members, allPicks, week.SeasonId, week.WeekNumber, allAwards);
+        var podium = BuildPodium(standings);
+        var awards = BuildAwards(quinielaId, week.Id, standings, matches, weekPicks);
+        var radar = BuildRadar(generalStandings, standings);
+        var pulse = BuildPulse(matches, weekPicks);
+
+        var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches);
+        var narrativeResult = await _narrativeService.GenerateChronicleAsync(narrativeContext);
+
+        var bulletin = await _unitOfWork.WeeklyBulletins.GetByQuinielaAndWeekAsync(quinielaId, week.Id);
+        if (bulletin == null)
+        {
+            bulletin = new WeeklyBulletin
+            {
+                QuinielaId = quinielaId,
+                WeekId = week.Id,
+                Headline = narrativeResult.Headline,
+                Chronicle = narrativeResult.Chronicle,
+                GeneratedByAi = narrativeResult.GeneratedByAi,
+                NarrativeModel = narrativeResult.NarrativeModel,
+                PublishedAtUtc = week.ScoredAt ?? DateTime.UtcNow,
+                IsPublished = true,
+                Active = true
+            };
+            await _unitOfWork.WeeklyBulletins.InsertAsync(bulletin);
+        }
+        else
+        {
+            bulletin.Headline = narrativeResult.Headline;
+            bulletin.Chronicle = narrativeResult.Chronicle;
+            bulletin.GeneratedByAi = narrativeResult.GeneratedByAi;
+            bulletin.NarrativeModel = narrativeResult.NarrativeModel;
+            bulletin.LastModified = DateTime.UtcNow;
+            await _unitOfWork.WeeklyBulletins.UpdateAsync(bulletin);
+        }
+
+        var bulletinResponse = await GetBulletinAsync(quinielaId, weekId);
+        bulletinResponse.Message = bulletinResponse.isSuccess
+            ? "Crónica regenerada exitosamente."
+            : bulletinResponse.Message;
+
+        return bulletinResponse;
+    }
+
+    public async Task<Response<WeeklyBulletinDto>> UpdateChronicleAsync(int quinielaId, int weekId, int userId, UpdateChronicleDto dto)
+    {
+        var response = new Response<WeeklyBulletinDto>();
+
+        var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
+        if (quiniela == null)
+        {
+            response.isSuccess = false;
+            response.Message = "Quiniela no encontrada.";
+            return response;
+        }
+
+        var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
+        if (membership == null || (membership.Role != "ADMIN" && membership.Role != "OWNER"))
+        {
+            response.isSuccess = false;
+            response.Message = "Solo los administradores u owners pueden editar la crónica.";
+            return response;
+        }
+
+        var bulletin = await _unitOfWork.WeeklyBulletins.GetByQuinielaAndWeekAsync(quinielaId, weekId);
+        if (bulletin == null)
+        {
+            response.isSuccess = false;
+            response.Message = "Boletín no encontrado.";
+            return response;
+        }
+
+        bulletin.Headline = dto.Headline?.Trim();
+        bulletin.Chronicle = dto.Chronicle?.Trim();
+        bulletin.GeneratedByAi = false;
+        bulletin.NarrativeModel = "Manual-Edit";
+        bulletin.LastModified = DateTime.UtcNow;
+
+        await _unitOfWork.WeeklyBulletins.UpdateAsync(bulletin);
+
+        var bulletinResponse = await GetBulletinAsync(quinielaId, weekId);
+        bulletinResponse.Message = bulletinResponse.isSuccess
+            ? "Crónica actualizada correctamente."
+            : bulletinResponse.Message;
+
+        return bulletinResponse;
+    }
+
+    private async Task<BulletinNarrativeContextDto> BuildNarrativeContextAsync(
+        int quinielaId,
+        Week week,
+        List<PodiumMemberDto> podium,
+        BulletinAwardsDto awards,
+        BulletinRadarDto? radar,
+        BulletinPulseDto? pulse,
+        List<Match> weekMatches)
+    {
+        var season = await _unitOfWork.Seasons.GetAsync(week.SeasonId);
+        var derbies = _derbyDetector.DetectDerbies(weekMatches);
+
+        var seasonMatches = (await _unitOfWork.Matches.GetBySeasonIdAsync(week.SeasonId)).ToList();
+        var streaks = _streakCalculator.CalculateNotableStreaks(seasonMatches, weekMatches);
+
+        var matchSummaries = weekMatches
+            .Where(m => string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase))
+            .Select(m => $"{m.HomeTeam?.DisplayName ?? m.HomeTeam?.Name ?? "Local"} {m.HomeScore} - {m.AwayScore} {m.AwayTeam?.DisplayName ?? m.AwayTeam?.Name ?? "Visita"}{(string.IsNullOrEmpty(m.WinnerAbbr) ? "" : $" (Gana {m.WinnerAbbr})")}{(string.IsNullOrEmpty(m.Venue) ? "" : $" [Estadio: {m.Venue}]")}")
+            .ToList();
+
+        return new BulletinNarrativeContextDto
+        {
+            WeekNumber = week.WeekNumber,
+            SeasonName = season?.Name ?? $"Temporada {week.SeasonId}",
+            CommunityAccuracyPct = pulse?.CommunityAccuracyPct ?? 0,
+            Podium = podium,
+            Favorite = pulse?.Favorite,
+            RompeQuinielas = awards.RompeQuinielas,
+            SurpriseKing = awards.SurpriseKing,
+            Humillado = awards.Humillado,
+            Somnifero = awards.Somnifero,
+            EmpateFallido = awards.EmpateFallido,
+            Climber = radar?.Climber,
+            Faller = radar?.Faller,
+            Derbies = derbies,
+            Streaks = streaks,
+            FinishedMatchSummaries = matchSummaries
+        };
     }
 
     private async Task<Week?> ResolveLatestEditionWeekAsync(int leagueId)

@@ -60,4 +60,42 @@ public class BulletinController : ControllerBase
 
         return Ok(response);
     }
+
+    /// <summary>
+    /// POST /api/quinielas/{quinielaId}/bulletin/{weekId}/regenerate-chronicle
+    /// Regenera la crónica deportiva con IA (Solo Admin/Owner).
+    /// </summary>
+    [HttpPost("{weekId:int}/regenerate-chronicle")]
+    public async Task<IActionResult> RegenerateChronicle(int quinielaId, int weekId)
+    {
+        var userId = GetCurrentUserId();
+        if (userId <= 0) return Unauthorized();
+
+        var response = await _bulletinApplication.RegenerateChronicleAsync(quinielaId, weekId, userId);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
+
+    /// <summary>
+    /// PUT /api/quinielas/{quinielaId}/bulletin/{weekId}/chronicle
+    /// Edita manualmente el titular y la crónica del boletín (Solo Admin/Owner).
+    /// </summary>
+    [HttpPut("{weekId:int}/chronicle")]
+    public async Task<IActionResult> UpdateChronicle(int quinielaId, int weekId, [FromBody] UpdateChronicleDto dto)
+    {
+        var userId = GetCurrentUserId();
+        if (userId <= 0) return Unauthorized();
+
+        var response = await _bulletinApplication.UpdateChronicleAsync(quinielaId, weekId, userId, dto);
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
 }
