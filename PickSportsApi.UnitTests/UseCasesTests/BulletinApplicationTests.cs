@@ -2,6 +2,7 @@ using Domain.Entities;
 using DTO.Bulletin;
 using FluentAssertions;
 using Interface.Persistence;
+using Interface.UseCases;
 using Moq;
 using UseCases.Bulletin;
 using UseCases.Scoring;
@@ -21,6 +22,9 @@ public class BulletinApplicationTests
 
     private readonly Mock<IUnitOfWork> _mockUow = new();
     private readonly ScoringEngine _engine = new();
+    private readonly Mock<IBulletinNarrativeService> _mockNarrativeService = new();
+    private readonly LeagueDerbyDetector _derbyDetector = new();
+    private readonly StreakCalculatorService _streakCalculator = new();
     private readonly BulletinApplication _sut;
 
     private readonly DateTime _nextWeekFirstGameUtc = new(2026, 10, 2, 1, 0, 0, DateTimeKind.Utc);
@@ -28,7 +32,16 @@ public class BulletinApplicationTests
 
     public BulletinApplicationTests()
     {
-        _sut = new BulletinApplication(_mockUow.Object, _engine);
+        _mockNarrativeService.Setup(n => n.GenerateChronicleAsync(It.IsAny<BulletinNarrativeContextDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BulletinNarrativeResultDto
+            {
+                Headline = "Crónica de Prueba",
+                Chronicle = "Cuerpo de prueba",
+                GeneratedByAi = true,
+                NarrativeModel = "gemini-3.8-flash"
+            });
+
+        _sut = new BulletinApplication(_mockUow.Object, _engine, _mockNarrativeService.Object, _derbyDetector, _streakCalculator);
     }
 
     #region Test Data
@@ -147,6 +160,7 @@ public class BulletinApplicationTests
         _mockUow.Setup(u => u.Weeks.GetAsync(ScoredWeekId)).ReturnsAsync(scoredWeek);
         _mockUow.Setup(u => u.QuinielaMembers.GetMembersAsync(QuinielaId)).ReturnsAsync(BuildMembers());
         _mockUow.Setup(u => u.Matches.GetByWeekIdAsync(ScoredWeekId)).ReturnsAsync(BuildScoredWeekMatches());
+        _mockUow.Setup(u => u.Matches.GetBySeasonIdAsync(It.IsAny<int>())).ReturnsAsync(new List<MatchEntity>());
         _mockUow.Setup(u => u.Picks.GetAllPicksForWeekAsync(QuinielaId, ScoredWeekId)).ReturnsAsync(BuildScoredWeekPicks());
         _mockUow.Setup(u => u.Picks.GetAllPicksForQuinielaAsync(QuinielaId)).ReturnsAsync(BuildSeasonPicks());
         _mockUow.Setup(u => u.WeeklyAwards.GetAllAwardsForQuinielaAsync(QuinielaId)).ReturnsAsync(new List<WeeklyAward>());
@@ -377,7 +391,10 @@ public class BulletinApplicationTests
         var bulletin = new WeeklyBulletin
         {
             Id = 500, QuinielaId = QuinielaId, WeekId = ScoredWeekId,
-            AdminAnnouncement = "Anuncio viejo", PublishedAtUtc = _scoredAtUtc, IsPublished = true, Active = true
+            AdminAnnouncement = "Anuncio viejo",
+            Headline = "Titular existente",
+            Chronicle = "Crónica existente",
+            PublishedAtUtc = _scoredAtUtc, IsPublished = true, Active = true
         };
         SetupScoredWeekGraph(bulletin);
         _mockUow.Setup(u => u.QuinielaMembers.GetMembershipAsync(QuinielaId, AdminUserId))
@@ -677,6 +694,65 @@ public class BulletinApplicationTests
         // Assert
         result.isSuccess.Should().BeTrue();
         result.Data!.Pulse.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RegenerateChronicleAsync_WhenCalledByAdmin_ShouldRegenerateAndSaveChronicle()
+    {
+        // Arrange
+        SetupScoredWeekGraph();
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembershipAsync(QuinielaId, AdminUserId))
+            .ReturnsAsync(new QuinielaMember { Id = 101, Role = "OWNER", UserId = AdminUserId });
+
+        _mockNarrativeService.Setup(n => n.GenerateChronicleAsync(It.IsAny<BulletinNarrativeContextDto>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BulletinNarrativeResultDto
+            {
+                Headline = "Titular Regenerado",
+                Chronicle = "Nueva crónica narrativa",
+                GeneratedByAi = true,
+                NarrativeModel = "gemini-3.8-flash"
+            });
+
+        // Act
+        var result = await _sut.RegenerateChronicleAsync(QuinielaId, ScoredWeekId, AdminUserId);
+
+        // Assert
+        result.isSuccess.Should().BeTrue();
+        result.Data!.Headline.Should().Be("Titular Regenerado");
+        result.Data.Chronicle.Should().Be("Nueva crónica narrativa");
+        result.Data.GeneratedByAi.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateChronicleAsync_WhenCalledByAdmin_ShouldUpdateChronicleManual()
+    {
+        // Arrange
+        SetupScoredWeekGraph();
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembershipAsync(QuinielaId, AdminUserId))
+            .ReturnsAsync(new QuinielaMember { Id = 101, Role = "OWNER", UserId = AdminUserId });
+
+        var existingBulletin = new WeeklyBulletin
+        {
+            QuinielaId = QuinielaId,
+            WeekId = ScoredWeekId,
+            Headline = "Titular viejo",
+            Chronicle = "Texto viejo"
+        };
+        _mockUow.Setup(u => u.WeeklyBulletins.GetByQuinielaAndWeekAsync(QuinielaId, ScoredWeekId))
+            .ReturnsAsync(existingBulletin);
+
+        // Act
+        var result = await _sut.UpdateChronicleAsync(QuinielaId, ScoredWeekId, AdminUserId, new UpdateChronicleDto
+        {
+            Headline = "Titular Editado Manualmente",
+            Chronicle = "Crónica corregida por admin"
+        });
+
+        // Assert
+        result.isSuccess.Should().BeTrue();
+        result.Data!.Headline.Should().Be("Titular Editado Manualmente");
+        result.Data.Chronicle.Should().Be("Crónica corregida por admin");
+        result.Data.GeneratedByAi.Should().BeFalse();
     }
 
     #endregion
