@@ -95,10 +95,39 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         {
             // Las jornadas de Liguilla/Playoffs no se procesan para quinielas de temporada regular (SPEC-020)
             var seasonLeague = await unitOfWork.Leagues.GetAsync(season.LeagueId);
-            var weeks = (await unitOfWork.Weeks.GetBySeasonIdAsync(season.Id))
-                .Where(w => w.Active && (w.Status == "PUBLISHED" || w.Status == "LOCKED"))
+            var seasonWeeks = (await unitOfWork.Weeks.GetBySeasonIdAsync(season.Id))
+                .Where(w => w.Active)
+                .OrderBy(w => w.WeekNumber)
+                .ToList();
+
+            var weeks = seasonWeeks
+                .Where(w => w.Status == "PUBLISHED" || w.Status == "LOCKED")
                 .Where(w => seasonLeague?.IsPlayoffWeek(w.WeekNumber) != true)
                 .ToList();
+
+            // Self-healing: Si no hay ninguna jornada en juego o publicada en la temporada regular,
+            // verificar si la última jornada calificada (SCORED) tiene una semana siguiente en DRAFT
+            // que deba publicarse automáticamente para que no quede estancada.
+            if (weeks.Count == 0)
+            {
+                var lastScoredWeek = seasonWeeks
+                    .Where(w => w.Status == "SCORED")
+                    .Where(w => seasonLeague?.IsPlayoffWeek(w.WeekNumber) != true)
+                    .OrderByDescending(w => w.WeekNumber)
+                    .FirstOrDefault();
+
+                var targetNextWeekNumber = lastScoredWeek != null ? lastScoredWeek.WeekNumber + 1 : 1;
+                var nextDraftWeek = seasonWeeks.FirstOrDefault(w => w.WeekNumber == targetNextWeekNumber && string.Equals(w.Status, "DRAFT", StringComparison.OrdinalIgnoreCase));
+
+                if (nextDraftWeek != null && seasonLeague?.IsPlayoffWeek(nextDraftWeek.WeekNumber) != true)
+                {
+                    _logger.LogInformation("[EspnLiveWorker] Self-healing: Temporada '{0}' sin jornadas activas. Auto-publicando jornada {1} (ID={2}).",
+                        season.Name, nextDraftWeek.WeekNumber, nextDraftWeek.Id);
+                    var quinielas = await GetQuinielasForWeekAsync(nextDraftWeek, season, unitOfWork);
+                    await PublishNextWeekInternalAsync(nextDraftWeek, quinielas, unitOfWork, espnSync, webPush, ct);
+                    weeks.Add(nextDraftWeek);
+                }
+            }
 
             foreach (var week in weeks)
             {
@@ -485,10 +514,13 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
             }
         }
 
-        week.Status = "SCORED";
-        week.ScoredAt = DateTime.UtcNow;
-        unitOfWork.Weeks.Update(week);
-        await unitOfWork.Save(ct);
+        if (week.Status != "SCORED")
+        {
+            week.Status = "SCORED";
+            week.ScoredAt = DateTime.UtcNow;
+            await unitOfWork.Weeks.UpdateAsync(week);
+            await unitOfWork.Save(ct);
+        }
 
         // Auto-publicar la siguiente jornada si existe y está en DRAFT
         try
@@ -505,39 +537,74 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
             }
             else if (nextWeek != null && string.Equals(nextWeek.Status, "DRAFT", StringComparison.OrdinalIgnoreCase))
             {
-                nextWeek.Status = "PUBLISHED";
-                nextWeek.PublishedAt = DateTime.UtcNow;
-                unitOfWork.Weeks.Update(nextWeek);
-                await unitOfWork.Save(ct);
-                _logger.LogInformation("[EspnLiveWorker] Siguiente jornada {0} (ID={1}) publicada automáticamente.", nextWeek.WeekNumber, nextWeek.Id);
-
-                // Sincronizar partidos desde ESPN para la jornada recién publicada
-                try
-                {
-                    await espnSync.SyncWeekAsync(nextWeek.Id, ct);
-                }
-                catch (Exception syncEx)
-                {
-                    _logger.LogWarning("[EspnLiveWorker] No se pudieron sincronizar partidos inmediatamente para la jornada {0}: {1}", nextWeek.WeekNumber, syncEx.Message);
-                }
-
-                // Notificar a las quinielas que la nueva jornada está disponible para pronósticos
-                foreach (var quiniela in quinielas)
-                {
-                    var nextWeekPayload = new PushNotificationPayload(
-                        Title: $"🟢 ¡Jornada {nextWeek.WeekNumber} disponible!",
-                        Message: $"La jornada {nextWeek.WeekNumber} ya está abierta para ingresar pronósticos.",
-                        Url: $"/fixtures?weekId={nextWeek.Id}",
-                        Data: new { type = "week_published", weekId = nextWeek.Id, weekNumber = nextWeek.WeekNumber }
-                    );
-
-                    await webPush.SendNotificationToQuinielaAsync(quiniela.Id, nextWeekPayload, ct);
-                }
+                await PublishNextWeekInternalAsync(nextWeek, quinielas, unitOfWork, espnSync, webPush, ct);
             }
         }
         catch (Exception pubEx)
         {
             _logger.LogError("[EspnLiveWorker] Error al intentar auto-publicar la siguiente jornada: {0}", pubEx.Message);
+        }
+    }
+
+    private async Task PublishNextWeekInternalAsync(
+        Week nextWeek,
+        List<Quiniela> quinielas,
+        IUnitOfWork unitOfWork,
+        IEspnSyncService espnSync,
+        IWebPushNotificationService webPush,
+        CancellationToken ct)
+    {
+        try
+        {
+            nextWeek.Status = "PUBLISHED";
+            nextWeek.PublishedAt = DateTime.UtcNow;
+
+            // Determinar FirstGameUtc inicial desde los partidos existentes
+            var matches = (await unitOfWork.Matches.GetByWeekIdAsync(nextWeek.Id)).ToList();
+            var firstMatchDate = matches.OrderBy(m => m.DateUtc).FirstOrDefault()?.DateUtc;
+            if (firstMatchDate.HasValue)
+            {
+                nextWeek.FirstGameUtc = firstMatchDate.Value;
+            }
+
+            await unitOfWork.Weeks.UpdateAsync(nextWeek);
+            await unitOfWork.Save(ct);
+            _logger.LogInformation("[EspnLiveWorker] Siguiente jornada {0} (ID={1}) publicada automáticamente.", nextWeek.WeekNumber, nextWeek.Id);
+
+            // Sincronizar partidos desde ESPN para la jornada recién publicada
+            try
+            {
+                await espnSync.SyncWeekAsync(nextWeek.Id, ct);
+                var syncedMatches = (await unitOfWork.Matches.GetByWeekIdAsync(nextWeek.Id)).ToList();
+                var syncedFirstMatch = syncedMatches.OrderBy(m => m.DateUtc).FirstOrDefault()?.DateUtc;
+                if (syncedFirstMatch.HasValue && nextWeek.FirstGameUtc != syncedFirstMatch.Value)
+                {
+                    nextWeek.FirstGameUtc = syncedFirstMatch.Value;
+                    await unitOfWork.Weeks.UpdateAsync(nextWeek);
+                    await unitOfWork.Save(ct);
+                }
+            }
+            catch (Exception syncEx)
+            {
+                _logger.LogWarning("[EspnLiveWorker] No se pudieron sincronizar partidos inmediatamente para la jornada {0}: {1}", nextWeek.WeekNumber, syncEx.Message);
+            }
+
+            // Notificar a las quinielas que la nueva jornada está disponible para pronósticos
+            foreach (var quiniela in quinielas)
+            {
+                var nextWeekPayload = new PushNotificationPayload(
+                    Title: $"🟢 ¡Jornada {nextWeek.WeekNumber} disponible!",
+                    Message: $"La jornada {nextWeek.WeekNumber} ya está abierta para ingresar pronósticos.",
+                    Url: $"/fixtures?weekId={nextWeek.Id}",
+                    Data: new { type = "week_published", weekId = nextWeek.Id, weekNumber = nextWeek.WeekNumber }
+                );
+
+                await webPush.SendNotificationToQuinielaAsync(quiniela.Id, nextWeekPayload, ct);
+            }
+        }
+        catch (Exception pubEx)
+        {
+            _logger.LogError("[EspnLiveWorker] Error al intentar publicar la jornada {0}: {1}", nextWeek.WeekNumber, pubEx.Message);
         }
     }
 }
