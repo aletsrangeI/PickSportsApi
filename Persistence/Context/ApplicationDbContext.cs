@@ -37,6 +37,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<PushSubscription> PushSubscriptions { get; set; }
     public DbSet<PushNotificationLog> PushNotificationLogs { get; set; }
     public DbSet<EspnHealthLog> EspnHealthLogs { get; set; }
+    public DbSet<LiguillaNode> LiguillaNodes { get; set; }
+    public DbSet<LiguillaBracket> LiguillaBrackets { get; set; }
 
     // Dynamic Form Catalog DbSets
     public DbSet<Catalogo> Catalogos { get; set; }

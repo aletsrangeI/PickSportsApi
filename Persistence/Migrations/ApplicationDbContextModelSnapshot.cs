@@ -345,6 +345,163 @@ namespace Persistence.Migrations
                     b.ToTable("Leagues", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.LiguillaBracket", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("BonusPoints")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ChampionPoints")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ChampionTeamId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsLocked")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("QfPoints")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("QfWinner1TeamId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("QfWinner2TeamId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("QfWinner3TeamId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("QfWinner4TeamId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("QuinielaId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SfPoints")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SfWinner1TeamId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SfWinner2TeamId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("SubmittedAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<int>("TotalScore")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("QuinielaId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("LiguillaBrackets", (string)null);
+                });
+
+            modelBuilder.Entity("Domain.Entities.LiguillaNode", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsResolved")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("KickoffUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("NodeNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ResolvedAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("Round")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int>("SeasonId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("SeedA")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("SeedB")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("TeamAId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("TeamBId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("WinnerTeamId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TeamAId");
+
+                    b.HasIndex("TeamBId");
+
+                    b.HasIndex("WinnerTeamId");
+
+                    b.HasIndex("SeasonId", "NodeNumber")
+                        .IsUnique();
+
+                    b.ToTable("LiguillaNodes", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.Match", b =>
                 {
                     b.Property<int>("Id")
@@ -1449,6 +1606,57 @@ namespace Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Sport");
+                });
+
+            modelBuilder.Entity("Domain.Entities.LiguillaBracket", b =>
+                {
+                    b.HasOne("Domain.Entities.Quiniela", "Quiniela")
+                        .WithMany()
+                        .HasForeignKey("QuinielaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Quiniela");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Domain.Entities.LiguillaNode", b =>
+                {
+                    b.HasOne("Domain.Entities.Season", "Season")
+                        .WithMany()
+                        .HasForeignKey("SeasonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.Team", "TeamA")
+                        .WithMany()
+                        .HasForeignKey("TeamAId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Domain.Entities.Team", "TeamB")
+                        .WithMany()
+                        .HasForeignKey("TeamBId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Domain.Entities.Team", "WinnerTeam")
+                        .WithMany()
+                        .HasForeignKey("WinnerTeamId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Season");
+
+                    b.Navigation("TeamA");
+
+                    b.Navigation("TeamB");
+
+                    b.Navigation("WinnerTeam");
                 });
 
             modelBuilder.Entity("Domain.Entities.Match", b =>

@@ -30,6 +30,7 @@ public class UnitOfWork : IUnitOfWork
         ContenidoCatalogos = new ContenidoCatalogoRepository(_dbContext);
         FormFields = new FormFieldRepository(_dbContext);
         UserAvatarFiles = new UserAvatarFileRepository(_dbContext);
+        Liguilla = new LiguillaRepository(_dbContext);
     }
 
     public IUserRepository Users { get; }
@@ -48,6 +49,7 @@ public class UnitOfWork : IUnitOfWork
     public IPushSubscriptionRepository PushSubscriptions { get; }
     public IPushNotificationLogRepository PushNotificationLogs { get; }
     public IEspnHealthLogRepository EspnHealthLogs { get; }
+    public ILiguillaRepository Liguilla { get; }
     public ICatalogoRepository Catalogos { get; }
     public IContenidoCatalogoRepository ContenidoCatalogos { get; }
     public IFormFieldRepository FormFields { get; }
