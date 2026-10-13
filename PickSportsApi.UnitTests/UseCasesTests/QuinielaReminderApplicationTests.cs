@@ -320,4 +320,51 @@ public class QuinielaReminderApplicationTests
             log.QuinielaId == 1)),
             Times.Once);
     }
+
+    [Fact]
+    public async Task ProcessDailyReminders_OnMondayAfterNoon_WhenRegularSeasonFinished_ShouldSendLiguillaAnnouncement()
+    {
+        // ARRANGE: Lunes a las 13:00 CST (19:00 UTC)
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+
+        var quiniela = new Quiniela { Id = 1, LeagueId = 10, Name = "Quiniela Amigos", Active = true };
+        var season = new Season { Id = 5, LeagueId = 10, Active = true };
+
+        // Todas las semanas 1..17 están SCORED
+        var weeks = Enumerable.Range(1, 17).Select(i => new Week
+        {
+            Id = 100 + i,
+            SeasonId = 5,
+            WeekNumber = i,
+            Status = "SCORED",
+            Active = true
+        }).ToList();
+
+        _mockQuinielas.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(weeks);
+
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(5);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        var count = await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT
+        Assert.True(count > 0);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            1,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("Pick'em") && p.Url == "/liguilla"),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log =>
+            log.NotificationType == "LIGUILLA_ANNOUNCED" &&
+            log.QuinielaId == 1)),
+            Times.Once);
+    }
 }
