@@ -46,4 +46,13 @@ public class PushNotificationLogRepository : GenericRepository<PushNotificationL
             l.NotificationType == notificationType &&
             l.QuinielaId == quinielaId, ct);
     }
+
+    public async Task<bool> HasLiguillaAnnouncementBeenSentAsync(
+        int quinielaId,
+        CancellationToken ct = default)
+    {
+        return await _dbSet.AnyAsync(l =>
+            l.NotificationType == "LIGUILLA_ANNOUNCED" &&
+            l.QuinielaId == quinielaId, ct);
+    }
 }

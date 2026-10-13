@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Common;
 using DTO.Espn;
+using DTO.Notifications;
 using Interface.Persistence;
 using Interface.UseCases;
 using Microsoft.AspNetCore.Authorization;
@@ -14,15 +15,21 @@ namespace WebApi.Controllers;
 [Route("api/[controller]")]
 public class WeeksController : ControllerBase
 {
-    private readonly IUnitOfWork     _unitOfWork;
-    private readonly IEspnSyncService _espnSync;
-    private readonly IBroadcastService _broadcastService;
+    private readonly IUnitOfWork              _unitOfWork;
+    private readonly IEspnSyncService         _espnSync;
+    private readonly IBroadcastService        _broadcastService;
+    private readonly IWebPushNotificationService _webPush;
 
-    public WeeksController(IUnitOfWork unitOfWork, IEspnSyncService espnSync, IBroadcastService broadcastService)
+    public WeeksController(
+        IUnitOfWork unitOfWork,
+        IEspnSyncService espnSync,
+        IBroadcastService broadcastService,
+        IWebPushNotificationService webPush)
     {
         _unitOfWork       = unitOfWork;
         _espnSync         = espnSync;
         _broadcastService = broadcastService;
+        _webPush          = webPush;
     }
 
     private int GetCurrentUserId()
@@ -148,6 +155,69 @@ public class WeeksController : ControllerBase
             isSuccess = true,
             Message   = $"JSON importado. {result.MatchesUpserted} partidos cargados.",
             Data      = result
+        });
+    }
+
+    /// <summary>POST /api/weeks/{id}/publish — publica manualmente una jornada en borrador.</summary>
+    [HttpPost("{id}/publish")]
+    public async Task<IActionResult> PublishWeek(int id, CancellationToken ct)
+    {
+        var week = await _unitOfWork.Weeks.GetAsync(id);
+        if (week == null)
+            return NotFound(new Response<string> { isSuccess = false, Message = "Jornada no encontrada." });
+
+        if (week.Status == "PUBLISHED")
+            return Ok(new Response<string> { isSuccess = true, Message = $"La jornada {week.WeekNumber} ya está publicada." });
+
+        week.Status = "PUBLISHED";
+        week.PublishedAt = DateTime.UtcNow;
+
+        var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
+        var firstMatchDate = matches.OrderBy(m => m.DateUtc).FirstOrDefault()?.DateUtc;
+        if (firstMatchDate.HasValue)
+        {
+            week.FirstGameUtc = firstMatchDate.Value;
+        }
+
+        await _unitOfWork.Weeks.UpdateAsync(week);
+        await _unitOfWork.Save(ct);
+
+        // Intentar sincronizar partidos con ESPN
+        try
+        {
+            await _espnSync.SyncWeekAsync(week.Id, ct);
+            var syncedMatches = (await _unitOfWork.Matches.GetByWeekIdAsync(week.Id)).ToList();
+            var syncedFirstMatch = syncedMatches.OrderBy(m => m.DateUtc).FirstOrDefault()?.DateUtc;
+            if (syncedFirstMatch.HasValue && week.FirstGameUtc != syncedFirstMatch.Value)
+            {
+                week.FirstGameUtc = syncedFirstMatch.Value;
+                await _unitOfWork.Weeks.UpdateAsync(week);
+                await _unitOfWork.Save(ct);
+            }
+        }
+        catch { }
+
+        // Notificar a quinielas activas
+        var season = await _unitOfWork.Seasons.GetAsync(week.SeasonId);
+        if (season != null)
+        {
+            var quinielas = (await _unitOfWork.Quinielas.GetByLeagueIdAsync(season.LeagueId)).Where(q => q.IsActive).ToList();
+            foreach (var quiniela in quinielas)
+            {
+                var payload = new PushNotificationPayload(
+                    Title: $"🟢 ¡Jornada {week.WeekNumber} disponible!",
+                    Message: $"La jornada {week.WeekNumber} ya está abierta para ingresar pronósticos.",
+                    Url: $"/fixtures?weekId={week.Id}",
+                    Data: new { type = "week_published", weekId = week.Id, weekNumber = week.WeekNumber }
+                );
+                await _webPush.SendNotificationToQuinielaAsync(quiniela.Id, payload, ct);
+            }
+        }
+
+        return Ok(new Response<string>
+        {
+            isSuccess = true,
+            Message = $"Jornada {week.WeekNumber} publicada exitosamente."
         });
     }
 }

@@ -18,6 +18,7 @@ public interface IUnitOfWork : IDisposable
     IPushSubscriptionRepository PushSubscriptions { get; }
     IPushNotificationLogRepository PushNotificationLogs { get; }
     IEspnHealthLogRepository EspnHealthLogs { get; }
+    ILiguillaRepository Liguilla { get; }
 
     // Dynamic Form Repositories
     ICatalogoRepository Catalogos { get; }
