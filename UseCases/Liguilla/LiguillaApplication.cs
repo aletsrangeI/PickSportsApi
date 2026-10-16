@@ -21,7 +21,12 @@ public class LiguillaApplication : ILiguillaApplication
             throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
 
         // Obtener la temporada activa de la liga
-        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId);
+        if (!quiniela.LeagueId.HasValue)
+        {
+            return new LiguillaOverviewDto { IsAvailable = false, Status = "HIDDEN" };
+        }
+
+        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value);
         if (currentSeason == null)
         {
             return new LiguillaOverviewDto { IsAvailable = false, Status = "HIDDEN" };
@@ -122,7 +127,7 @@ public class LiguillaApplication : ILiguillaApplication
         }
 
         var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
-        var currentSeason = quiniela != null ? await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId) : null;
+        var currentSeason = (quiniela != null && quiniela.LeagueId.HasValue) ? await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value) : null;
         var nodes = currentSeason != null ? await _unitOfWork.Liguilla.GetNodesBySeasonAsync(currentSeason.Id, ct) : new List<LiguillaNode>();
 
         var user = await _unitOfWork.Users.GetAsync(userId);
@@ -137,7 +142,10 @@ public class LiguillaApplication : ILiguillaApplication
         if (quiniela == null)
             throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
 
-        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId);
+        if (!quiniela.LeagueId.HasValue)
+            throw new InvalidOperationException("La quiniela no tiene una liga asignada.");
+
+        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value);
         if (currentSeason == null)
             throw new InvalidOperationException("No hay una temporada vigente configurada.");
 
@@ -230,7 +238,7 @@ public class LiguillaApplication : ILiguillaApplication
         if (quiniela == null)
             throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
 
-        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId);
+        var currentSeason = quiniela.LeagueId.HasValue ? await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value) : null;
         var nodes = currentSeason != null ? await _unitOfWork.Liguilla.GetNodesBySeasonAsync(currentSeason.Id, ct) : new List<LiguillaNode>();
 
         var brackets = await _unitOfWork.Liguilla.GetAllBracketsForQuinielaAsync(quinielaId, ct);
@@ -439,7 +447,10 @@ public class LiguillaApplication : ILiguillaApplication
         if (quiniela == null)
             throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
 
-        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId);
+        if (!quiniela.LeagueId.HasValue)
+            throw new InvalidOperationException("La quiniela no tiene una liga asignada.");
+
+        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value);
         if (currentSeason == null)
             throw new InvalidOperationException("No se encontró una temporada activa para esta liga.");
 
@@ -447,7 +458,7 @@ public class LiguillaApplication : ILiguillaApplication
         // Orden top 8 oficial de Liga MX Apertura 2026 actual según ESPN:
         // 1: América (AME, 227), 2: Toluca (TOL, 223), 3: Querétaro (QRO, 222), 4: Guadalajara (GDL, 219),
         // 5: León (LEO, 228), 6: Atlas (ATS, 216), 7: Cruz Azul (CAZ, 218), 8: Tijuana (TIJ, 10125)
-        var leagueTeams = (await _unitOfWork.Teams.GetByLeagueIdAsync(quiniela.LeagueId)).ToList();
+        var leagueTeams = (await _unitOfWork.Teams.GetByLeagueIdAsync(quiniela.LeagueId.Value)).ToList();
         
         var top8EspnIds = new[] { "227", "223", "222", "219", "228", "216", "218", "10125" };
         var top8Teams = new List<Team>();
