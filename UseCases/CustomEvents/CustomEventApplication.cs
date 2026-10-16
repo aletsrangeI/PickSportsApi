@@ -311,7 +311,14 @@ public class CustomEventApplication : ICustomEventApplication
 
         if (!string.IsNullOrWhiteSpace(request.Status))
         {
-            round.Status = request.Status.Trim();
+            var trimmed = request.Status.Trim();
+            if (trimmed != "Open" && trimmed != "Locked")
+            {
+                response.isSuccess = false;
+                response.Message = "El estado solo puede cambiarse a Open o Locked.";
+                return response;
+            }
+            round.Status = trimmed;
         }
 
         round.LastModified = DateTime.UtcNow;
@@ -569,6 +576,13 @@ public class CustomEventApplication : ICustomEventApplication
             return response;
         }
 
+        if (round.Status == "Resolved")
+        {
+            response.isSuccess = false;
+            response.Message = "La ronda ya ha sido resuelta previamente.";
+            return response;
+        }
+
         var roundPicks = (await _unitOfWork.CustomEvents.GetPicksByRoundIdAsync(roundId)).ToList();
 
         // 1. Evaluar aciertos y puntos en opciones y picks
@@ -617,7 +631,7 @@ public class CustomEventApplication : ICustomEventApplication
         return detailResponse;
     }
 
-    public async Task<Response<EventStandingsResponseDto>> GetStandingsAsync(int quinielaId, int? roundId)
+    public async Task<Response<EventStandingsResponseDto>> GetStandingsAsync(int quinielaId, int? roundId, int userId = 0)
     {
         var response = new Response<EventStandingsResponseDto>();
 
@@ -629,6 +643,20 @@ public class CustomEventApplication : ICustomEventApplication
             return response;
         }
 
+        if (userId > 0)
+        {
+            var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
+            var user = await _unitOfWork.Users.GetAsync(userId);
+            bool isGlobalAdmin = user?.Role == "ADMIN";
+
+            if ((membership == null || !membership.Active) && !isGlobalAdmin)
+            {
+                response.isSuccess = false;
+                response.Message = "No tienes acceso a la tabla de posiciones de esta quiniela.";
+                return response;
+            }
+        }
+
         var members = (await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId)).ToList();
         var roundStandings = new List<EventStandingRowDto>();
         string? roundTitle = null;
@@ -637,7 +665,7 @@ public class CustomEventApplication : ICustomEventApplication
         if (roundId.HasValue && roundId.Value > 0)
         {
             var round = await _unitOfWork.CustomEvents.GetRoundByIdWithDetailsAsync(roundId.Value);
-            if (round != null && round.Active)
+            if (round != null && round.Active && (round.EventGroup == null || round.EventGroup.QuinielaId == quinielaId))
             {
                 roundTitle = round.Title;
                 roundStatus = round.Status;

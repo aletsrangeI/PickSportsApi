@@ -136,7 +136,7 @@ public class CustomEventsController : ControllerBase
         var userId = GetCurrentUserId();
         if (userId <= 0) return Unauthorized();
 
-        var response = await _customEventApplication.GetStandingsAsync(quinielaId, roundId);
+        var response = await _customEventApplication.GetStandingsAsync(quinielaId, roundId, userId);
         if (!response.isSuccess)
         {
             return BadRequest(response);

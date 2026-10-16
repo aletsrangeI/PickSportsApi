@@ -17,12 +17,19 @@ public class CustomEventScoringEngine
         IEnumerable<QuestionResolutionItemDto> resolutions,
         IEnumerable<EventPick> picks)
     {
-        var resolutionMap = resolutions.ToDictionary(r => r.EventQuestionId, r => r.WinningOptionId);
+        var resolutionMap = resolutions
+            .GroupBy(r => r.EventQuestionId)
+            .ToDictionary(g => g.Key, g => g.Last().WinningOptionId);
         var picksByQuestion = picks.GroupBy(p => p.EventQuestionId).ToDictionary(g => g.Key, g => g.ToList());
 
         foreach (var question in questions)
         {
             if (!resolutionMap.TryGetValue(question.Id, out var winningOptionId))
+            {
+                continue;
+            }
+
+            if (!question.Options.Any(o => o.Id == winningOptionId))
             {
                 continue;
             }

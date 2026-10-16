@@ -142,10 +142,10 @@ public class CustomEventRepository : ICustomEventRepository
             if (existing != null)
             {
                 existing.EventOptionId = pick.EventOptionId;
-                existing.SubmittedAtUtc = DateTime.UtcNow;
-                existing.IsHit = null;
-                existing.PointsEarned = 0;
-                existing.Active = true;
+                existing.SubmittedAtUtc = pick.SubmittedAtUtc == default ? DateTime.UtcNow : pick.SubmittedAtUtc;
+                existing.IsHit = pick.IsHit;
+                existing.PointsEarned = pick.PointsEarned;
+                existing.Active = pick.Active;
                 _context.EventPicks.Update(existing);
             }
             else
