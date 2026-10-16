@@ -10,11 +10,16 @@ public class ScoringApplication : IScoringApplication
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly ScoringEngine _scoringEngine;
+    private readonly IChallengeApplication? _challengeApplication;
 
-    public ScoringApplication(IUnitOfWork unitOfWork, ScoringEngine scoringEngine)
+    public ScoringApplication(
+        IUnitOfWork unitOfWork,
+        ScoringEngine scoringEngine,
+        IChallengeApplication? challengeApplication = null)
     {
         _unitOfWork = unitOfWork;
         _scoringEngine = scoringEngine;
+        _challengeApplication = challengeApplication;
     }
 
     public async Task<Response<QuinielaStandingsResponseDto>> GetStandingsAsync(int quinielaId, int weekId)
@@ -194,6 +199,17 @@ public class ScoringApplication : IScoringApplication
         week.ScoredAt = DateTime.UtcNow;
         week.LastModified = DateTime.UtcNow;
         await _unitOfWork.Weeks.UpdateAsync(week);
+
+        // 8. Resolver automáticamente los retos sociales de la jornada (SPEC-022)
+        if (_challengeApplication != null)
+        {
+            await _challengeApplication.ResolveWeekChallengesAsync(quinielaId, weekId);
+        }
+        else if (_unitOfWork.Challenges != null)
+        {
+            var fallbackChallengeApp = new UseCases.Challenges.ChallengeApplication(_unitOfWork, new UseCases.Challenges.ChallengeScoringEngine(), _scoringEngine);
+            await fallbackChallengeApp.ResolveWeekChallengesAsync(quinielaId, weekId);
+        }
 
         await _unitOfWork.Save();
 

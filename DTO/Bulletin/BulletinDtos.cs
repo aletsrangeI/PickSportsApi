@@ -1,3 +1,5 @@
+using DTO.Challenges;
+
 namespace DTO.Bulletin;
 
 public class PodiumMemberDto
@@ -114,6 +116,7 @@ public class WeeklyBulletinDto
     public BulletinRadarDto? Radar { get; set; }
     public BulletinPulseDto? Pulse { get; set; }
     public NextWeekInfoDto? NextWeekInfo { get; set; }
+    public List<ChallengeDto> Challenges { get; set; } = new();
 }
 
 public class UpdateAnnouncementDto
