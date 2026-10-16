@@ -11,8 +11,12 @@ public class CreateQuinielaDtoValidator : AbstractValidator<CreateQuinielaDto>
             .NotEmpty().WithMessage("El nombre de la quiniela es requerido.")
             .Length(3, 100).WithMessage("El nombre debe tener entre 3 y 100 caracteres.");
 
-        RuleFor(x => x.LeagueId)
-            .GreaterThan(0).WithMessage("Debe seleccionar una liga válida.");
+        When(x => !string.Equals(x.QuinielaType, "CustomEvents", StringComparison.OrdinalIgnoreCase), () =>
+        {
+            RuleFor(x => x.LeagueId)
+                .NotNull().WithMessage("Debe seleccionar una liga válida.")
+                .GreaterThan(0).WithMessage("Debe seleccionar una liga válida.");
+        });
 
         RuleFor(x => x.EntryFee)
             .GreaterThanOrEqualTo(0).WithMessage("La cuota de inscripción no puede ser negativa.");

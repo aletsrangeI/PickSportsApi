@@ -9,6 +9,7 @@ public class QuinielaMember : BaseAuditableEntity
     public string Alias { get; set; } = null!;
     public string Role { get; set; } = "MEMBER"; // OWNER, ADMIN, MEMBER
     public bool PaidFee { get; set; }
+    public int TotalPoints { get; set; }
     public int TotalHits { get; set; }
     public int TotalUpsets { get; set; }
     public int TotalHumillaciones { get; set; }
@@ -20,4 +21,5 @@ public class QuinielaMember : BaseAuditableEntity
     public User User { get; set; } = null!;
     public ICollection<Pick> Picks { get; set; } = new List<Pick>();
     public ICollection<WeeklyAward> WeeklyAwards { get; set; } = new List<WeeklyAward>();
+    public ICollection<EventPick> EventPicks { get; set; } = new List<EventPick>();
 }
