@@ -12,5 +12,5 @@ public interface ICustomEventApplication
     Task<Response<EventQuestionDto>> AddQuestionAsync(int quinielaId, int roundId, int userId, CreateEventQuestionDto request);
     Task<Response<EventRoundDetailDto>> SubmitPicksAsync(int quinielaId, int roundId, int userId, SubmitEventPicksDto request);
     Task<Response<EventRoundDetailDto>> ResolveRoundAsync(int quinielaId, int roundId, int userId, ResolveEventRoundDto request);
-    Task<Response<EventStandingsResponseDto>> GetStandingsAsync(int quinielaId, int? roundId);
+    Task<Response<EventStandingsResponseDto>> GetStandingsAsync(int quinielaId, int? roundId, int userId = 0);
 }

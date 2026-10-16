@@ -72,6 +72,13 @@ public class PickApplication : IPickApplication
             return response;
         }
 
+        if (quiniela.QuinielaType == Domain.Enums.QuinielaType.CustomEvents)
+        {
+            response.isSuccess = false;
+            response.Message = "Esta quiniela es de Eventos Personalizados. Los pronósticos se realizan en el módulo de eventos.";
+            return response;
+        }
+
         // Regla: Las jornadas de Liguilla no forman parte de la quiniela de temporada regular (SPEC-020)
         var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
         if (league?.IsPlayoffWeek(week.WeekNumber) == true)
@@ -391,6 +398,13 @@ public class PickApplication : IPickApplication
         {
             response.isSuccess = false;
             response.Message = "La quiniela no existe.";
+            return response;
+        }
+
+        if (quiniela.QuinielaType == Domain.Enums.QuinielaType.CustomEvents)
+        {
+            response.isSuccess = false;
+            response.Message = "El autollenado deportivo no aplica a quinielas de Eventos Personalizados.";
             return response;
         }
 

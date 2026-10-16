@@ -90,6 +90,13 @@ public class ScoringApplication : IScoringApplication
             return response;
         }
 
+        if (quiniela.QuinielaType == Domain.Enums.QuinielaType.CustomEvents)
+        {
+            response.isSuccess = false;
+            response.Message = "La calificación de jornadas deportivas no aplica a quinielas de Eventos Personalizados.";
+            return response;
+        }
+
         var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
         if (membership == null || (membership.Role != "ADMIN" && membership.Role != "OWNER"))
         {
