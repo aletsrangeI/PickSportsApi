@@ -79,11 +79,12 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
                 var weeks = (await _unitOfWork.Weeks.GetBySeasonIdAsync(seasonId)).Where(w => w.Active).ToList();
 
                 // -------------------------------------------------------------
-                // REGLA 1: LUNES (12:00 PM CST) - Apertura de Jornada Siguiente
+                // REGLA 1: LUNES (12:00 PM CST) - Apertura de Jornada Siguiente o Liguilla
                 // -------------------------------------------------------------
                 if (dayOfWeek == DayOfWeek.Monday && timeOfDay >= new TimeSpan(12, 0, 0))
                 {
                     totalNotificationsSent += await ProcessMondayOpeningAsync(quiniela, weeks, todayDateStr, nowUtc, ct);
+                    totalNotificationsSent += await ProcessMondayLiguillaAnnouncementAsync(quiniela, weeks, todayDateStr, nowUtc, ct);
                 }
 
                 // -----------------------------------------------------------------------------------
@@ -165,6 +166,51 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         }
 
         return sentCount;
+    }
+
+    private async Task<int> ProcessMondayLiguillaAnnouncementAsync(
+        Quiniela quiniela,
+        List<Week> weeks,
+        string todayDateStr,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
+        // Solo aplica si todas las jornadas regulares (<= 17) ya están SCORED
+        var regularWeeks = weeks.Where(w => w.WeekNumber <= 17).ToList();
+        bool isRegularSeasonFinished = regularWeeks.Count > 0 && regularWeeks.All(w => string.Equals(w.Status, "SCORED", StringComparison.OrdinalIgnoreCase));
+        if (!isRegularSeasonFinished) return 0;
+
+        // Idempotencia: Verificar si ya se envió el anuncio de Liguilla para esta quiniela
+        var alreadySent = await _unitOfWork.PushNotificationLogs.HasLiguillaAnnouncementBeenSentAsync(quiniela.Id, ct);
+        if (alreadySent) return 0;
+
+        var payload = new PushNotificationPayload(
+            Title: "🏆 ¡Llegó la Liguilla: Pick'em ya disponible!",
+            Message: $"¡Concluyó la fase regular! Ya puedes armar tu bracket en Pick'em Liguilla para {quiniela.Name}. ¡Haz tus pronósticos y gana la gloria!",
+            Url: "/liguilla",
+            Data: new { type = "liguilla_opened", quinielaId = quiniela.Id }
+        );
+
+        var delivered = await _webPushService.SendNotificationToQuinielaAsync(quiniela.Id, payload, ct);
+
+        await _unitOfWork.PushNotificationLogs.InsertAsync(new PushNotificationLog
+        {
+            NotificationType = "LIGUILLA_ANNOUNCED",
+            WeekId = 0,
+            QuinielaId = quiniela.Id,
+            UserId = null,
+            DateLocal = todayDateStr,
+            Title = payload.Title,
+            Message = payload.Message,
+            DeliveredCount = delivered,
+            SentAtUtc = nowUtc,
+            Active = true
+        });
+
+        _logger.LogInformation("[QuinielaReminder] Notificación de apertura de Pick'em Liguilla enviada para Quiniela '{0}' ({1} entregados).",
+            quiniela.Name, delivered);
+
+        return 1;
     }
 
     private async Task<int> ProcessIncompletePicksReminderAsync(

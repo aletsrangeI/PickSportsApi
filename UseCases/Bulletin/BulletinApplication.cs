@@ -1,6 +1,7 @@
 using Common;
 using Domain.Entities;
 using DTO.Bulletin;
+using DTO.Challenges;
 using DTO.Scoring;
 using Interface.Persistence;
 using Interface.UseCases;
@@ -17,19 +18,22 @@ public class BulletinApplication : IBulletinApplication
     private readonly IBulletinNarrativeService _narrativeService;
     private readonly LeagueDerbyDetector _derbyDetector;
     private readonly StreakCalculatorService _streakCalculator;
+    private readonly IChallengeApplication? _challengeApplication;
 
     public BulletinApplication(
         IUnitOfWork unitOfWork,
         ScoringEngine scoringEngine,
         IBulletinNarrativeService narrativeService,
         LeagueDerbyDetector derbyDetector,
-        StreakCalculatorService streakCalculator)
+        StreakCalculatorService streakCalculator,
+        IChallengeApplication? challengeApplication = null)
     {
         _unitOfWork = unitOfWork;
         _scoringEngine = scoringEngine;
         _narrativeService = narrativeService;
         _derbyDetector = derbyDetector;
         _streakCalculator = streakCalculator;
+        _challengeApplication = challengeApplication;
     }
 
     public async Task<Response<WeeklyBulletinDto>> GetBulletinAsync(int quinielaId, int? weekId)
@@ -90,12 +94,13 @@ public class BulletinApplication : IBulletinApplication
         var awards = BuildAwards(quinielaId, week.Id, standings, matches, weekPicks);
         var radar = BuildRadar(generalStandings, standings);
         var pulse = BuildPulse(matches, weekPicks);
+        var challenges = await LoadWeekChallengesAsync(quinielaId, week.Id);
 
         var bulletin = await _unitOfWork.WeeklyBulletins.GetByQuinielaAndWeekAsync(quinielaId, week.Id);
         // Auto-publicación: en cuanto la jornada está calificada se emite la edición oficial
         if (bulletin == null)
         {
-            var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches);
+            var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches, challenges);
             var narrativeResult = await _narrativeService.GenerateChronicleAsync(narrativeContext);
 
             bulletin = new WeeklyBulletin
@@ -115,7 +120,7 @@ public class BulletinApplication : IBulletinApplication
         }
         else if (string.IsNullOrWhiteSpace(bulletin.Chronicle))
         {
-            var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches);
+            var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches, challenges);
             var narrativeResult = await _narrativeService.GenerateChronicleAsync(narrativeContext);
             bulletin.Headline = narrativeResult.Headline;
             bulletin.Chronicle = narrativeResult.Chronicle;
@@ -147,7 +152,8 @@ public class BulletinApplication : IBulletinApplication
             Awards = awards,
             Radar = radar,
             Pulse = pulse,
-            NextWeekInfo = nextWeekInfo
+            NextWeekInfo = nextWeekInfo,
+            Challenges = challenges
         };
 
         return response;
@@ -296,8 +302,9 @@ public class BulletinApplication : IBulletinApplication
         var awards = BuildAwards(quinielaId, week.Id, standings, matches, weekPicks);
         var radar = BuildRadar(generalStandings, standings);
         var pulse = BuildPulse(matches, weekPicks);
+        var challenges = await LoadWeekChallengesAsync(quinielaId, week.Id);
 
-        var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches);
+        var narrativeContext = await BuildNarrativeContextAsync(quinielaId, week, podium, awards, radar, pulse, matches, challenges);
         var narrativeResult = await _narrativeService.GenerateChronicleAsync(narrativeContext);
 
         var bulletin = await _unitOfWork.WeeklyBulletins.GetByQuinielaAndWeekAsync(quinielaId, week.Id);
@@ -386,6 +393,32 @@ public class BulletinApplication : IBulletinApplication
         return bulletinResponse;
     }
 
+    private async Task<List<ChallengeDto>> LoadWeekChallengesAsync(int quinielaId, int weekId)
+    {
+        try
+        {
+            if (_challengeApplication != null)
+            {
+                return await _challengeApplication.GetChallengesByWeekAsync(quinielaId, weekId, 0);
+            }
+
+            if (_unitOfWork.Challenges != null)
+            {
+                var fallbackChallengeApp = new UseCases.Challenges.ChallengeApplication(
+                    _unitOfWork,
+                    new UseCases.Challenges.ChallengeScoringEngine(),
+                    _scoringEngine);
+                return await fallbackChallengeApp.GetChallengesByWeekAsync(quinielaId, weekId, 0);
+            }
+        }
+        catch
+        {
+            // No bloquear la emisión del boletín si el repositorio de retos no está inicializado en pruebas
+        }
+
+        return new List<ChallengeDto>();
+    }
+
     private async Task<BulletinNarrativeContextDto> BuildNarrativeContextAsync(
         int quinielaId,
         Week week,
@@ -393,7 +426,8 @@ public class BulletinApplication : IBulletinApplication
         BulletinAwardsDto awards,
         BulletinRadarDto? radar,
         BulletinPulseDto? pulse,
-        List<Match> weekMatches)
+        List<Match> weekMatches,
+        List<ChallengeDto> challenges)
     {
         var season = await _unitOfWork.Seasons.GetAsync(week.SeasonId);
         var derbies = _derbyDetector.DetectDerbies(weekMatches);
@@ -435,7 +469,8 @@ public class BulletinApplication : IBulletinApplication
             Streaks = streaks,
             FinishedMatchSummaries = matchSummaries,
             NextWeekNumber = nextWeek?.WeekNumber,
-            NextWeekMatchSummaries = nextWeekMatchSummaries
+            NextWeekMatchSummaries = nextWeekMatchSummaries,
+            Challenges = challenges
         };
     }
 

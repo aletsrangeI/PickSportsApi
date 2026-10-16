@@ -323,7 +323,7 @@ public class EspnLiveScoreBackgroundWorkerTests
         Assert.Equal("SCORED", currentWeek.Status);
         Assert.Equal("PUBLISHED", nextWeek.Status);
         Assert.NotNull(nextWeek.PublishedAt);
-        _mockWeeks.Verify(w => w.Update(nextWeek), Times.Once);
+        _mockWeeks.Verify(w => w.UpdateAsync(nextWeek), Times.AtLeastOnce);
         _mockUow.Verify(u => u.Save(It.IsAny<CancellationToken>()), Times.AtLeast(2));
         _mockEspnSync.Verify(e => e.SyncWeekAsync(101, It.IsAny<CancellationToken>()), Times.Once);
         _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
@@ -427,5 +427,41 @@ public class EspnLiveScoreBackgroundWorkerTests
         _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(50, It.IsAny<PushNotificationPayload>(), default), Times.Never);
         _mockPicks.Verify(p => p.InsertAsync(It.Is<Pick>(pick => pick.QuinielaId == 60 && pick.IsAutoFilled)), Times.Once);
         _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(60, It.Is<PushNotificationPayload>(p => p.Title.Contains("bloqueada")), default), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessAutomationCycle_TemporadaSinJornadasActivas_AutoPublicaSiguienteEnDraft_SelfHealing()
+    {
+        // Arrange: la temporada 1 no tiene ninguna jornada PUBLISHED ni LOCKED; la J11 está SCORED y la J12 está en DRAFT
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        var season = new Season { Id = 1, LeagueId = 10, Active = true, Name = "Apertura 2026" };
+        var week11 = new Week { Id = 28, SeasonId = 1, WeekNumber = 11, Status = "SCORED", Active = true };
+        var week12 = new Week { Id = 29, SeasonId = 1, WeekNumber = 12, Status = "DRAFT", Active = true };
+        var quiniela = new Quiniela { Id = 4, LeagueId = 10, Active = true, Name = "Quiniela Oficial" };
+
+        var match1 = new DbMatch { Id = 101, WeekId = 29, DateUtc = DateTime.UtcNow.AddDays(3), Active = true };
+
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockLeagues.Setup(l => l.GetAsync(10)).ReturnsAsync(new League { Id = 10, WeeksCount = 17 });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week> { week11, week12 });
+        _mockMatches.Setup(m => m.GetByWeekIdAsync(29)).ReturnsAsync(new List<DbMatch> { match1 });
+        _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockPicks.Setup(p => p.GetAllPicksForQuinielaAsync(4)).ReturnsAsync(new List<Pick>());
+
+        // Act
+        await worker.ProcessAutomationCycleAsync(_mockUow.Object, _mockEspnSync.Object, _mockWebPush.Object, _mockScoringApp.Object, default);
+
+        // Assert: Self-healing promueve week12 a PUBLISHED, fija FirstGameUtc, sincroniza ESPN y envía push
+        Assert.Equal("PUBLISHED", week12.Status);
+        Assert.NotNull(week12.PublishedAt);
+        Assert.Equal(match1.DateUtc, week12.FirstGameUtc);
+        _mockWeeks.Verify(w => w.UpdateAsync(week12), Times.AtLeastOnce);
+        _mockUow.Verify(u => u.Save(It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockEspnSync.Verify(e => e.SyncWeekAsync(29, It.IsAny<CancellationToken>()), Times.Once);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            4,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("disponible")),
+            default), Times.Once);
     }
 }

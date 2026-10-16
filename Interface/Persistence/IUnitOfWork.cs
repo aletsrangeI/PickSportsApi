@@ -14,10 +14,12 @@ public interface IUnitOfWork : IDisposable
     IPickRepository Picks { get; }
     IWeeklyAwardRepository WeeklyAwards { get; }
     IWeeklyBulletinRepository WeeklyBulletins { get; }
+    IChallengeRepository Challenges { get; }
     IPickAuditLogRepository PickAuditLogs { get; }
     IPushSubscriptionRepository PushSubscriptions { get; }
     IPushNotificationLogRepository PushNotificationLogs { get; }
     IEspnHealthLogRepository EspnHealthLogs { get; }
+    ILiguillaRepository Liguilla { get; }
 
     // Dynamic Form Repositories
     ICatalogoRepository Catalogos { get; }
