@@ -31,6 +31,8 @@ public class ChallengeApplication : IChallengeApplication
     private readonly ChallengeScoringEngine _challengeScoringEngine;
     private readonly ScoringEngine _scoringEngine;
     private readonly IWebPushNotificationService? _webPushService;
+    // En modo pre-lanzamiento mantenemos las notificaciones push de retos desactivadas para pruebas
+    private readonly bool _enableChallengePushNotifications = false;
 
     public ChallengeApplication(
         IUnitOfWork unitOfWork,
@@ -322,8 +324,8 @@ public class ChallengeApplication : IChallengeApplication
         await _unitOfWork.Challenges.InsertAsync(challenge);
         await _unitOfWork.Save(ct);
 
-        // Enviar notificación Web Push a los miembros invitados (sin romper el flujo si Push falla)
-        if (_webPushService != null)
+        // Enviar notificación Web Push a los miembros invitados (desactivado en pre-lanzamiento)
+        if (_webPushService != null && _enableChallengePushNotifications)
         {
             try
             {
@@ -518,8 +520,8 @@ public class ChallengeApplication : IChallengeApplication
         var members = (await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId))?.ToList() ?? new List<QuinielaMember>();
         var memberMap = members.ToDictionary(m => m.Id);
 
-        // Enviar notificación Web Push al creador del reto (sin romper el flujo si Push falla)
-        if (_webPushService != null)
+        // Enviar notificación Web Push al creador del reto (desactivado en pre-lanzamiento)
+        if (_webPushService != null && _enableChallengePushNotifications)
         {
             try
             {
