@@ -166,6 +166,7 @@ public class GeminiBulletinNarrativeService : IBulletinNarrativeService
         sb.AppendLine("  * El Rompe-Quinielas (el partido donde casi todos se fueron con la finta y solo un valiente o nadie acertó).");
         sb.AppendLine("  * La Sala de la Infamia: el más Humillado de la fecha, los somníferos con empates a cero, y los empates fallidos.");
         sb.AppendLine("  * El Trepa Cerros (quien dio el salto en la tabla general) vs la Caída Libre (quien se fue al abismo).");
+        sb.AppendLine("  * Los Retos y Apuestas Sociales (Side Bets): quién ganó y qué tienen que pagar los perdedores, mención ligera y amigable de quiénes prefirieron pasar del reto ('Pasó del reto'), la emoción de las 'Dobles Vidas' en Muerte Súbita, y burla especial cuando en un reto nadie acertó o todos se pasaron de goles (RESOLVED_NO_WINNER).");
         sb.AppendLine();
         sb.AppendLine("REGLAS EDITORIALES Y DE FORMATO:");
         sb.AppendLine("- PROHIBIDO hacer un simple resumen o lista de estadísticas una por una (el lector ya ve la tabla y tarjetas abajo).");
@@ -244,6 +245,44 @@ public class GeminiBulletinNarrativeService : IBulletinNarrativeService
             foreach (var s in ctx.Streaks)
             {
                 sb.AppendLine($"- {s.Description}");
+            }
+        }
+
+        if (ctx.Challenges != null && ctx.Challenges.Any())
+        {
+            sb.AppendLine();
+            sb.AppendLine("RETOS Y APUESTAS SOCIALES DE LA JORNADA (SIDE BETS):");
+            foreach (var c in ctx.Challenges)
+            {
+                var winners = c.Participants.Where(p => p.Outcome == "WINNER").Select(p => p.Alias).ToList();
+                var losers = c.Participants.Where(p => p.Outcome == "LOSER").Select(p => $"{p.Alias} ({(p.IsDebtSettled ? "Apuesta Cumplida" : "Pendiente de pago")})").ToList();
+                var passed = c.Participants.Where(p => p.Status is "DECLINED" or "EXPIRED").Select(p => p.Alias).ToList();
+
+                sb.Append($"- Reto [{c.ChallengeType}] por \"{c.StakesDescription}\" (Estado: {c.Status}): ");
+                if (c.Status == "RESOLVED_NO_WINNER")
+                {
+                    sb.Append($"¡BURLA OBLIGATORIA (Nadie acertó / Todos se pasaron)! {c.ResolutionSummary}");
+                }
+                else if (winners.Any() || losers.Any())
+                {
+                    sb.Append($"Ganador(es): {string.Join(", ", winners)} | Perdedor(es): {string.Join(", ", losers)}. {c.ResolutionSummary}");
+                }
+                else
+                {
+                    sb.Append(c.ResolutionSummary ?? "Sin resolución.");
+                }
+
+                if (c.DoubleLifeEvents != null && c.DoubleLifeEvents.Any())
+                {
+                    sb.Append($" | Eventos de ❤️‍🔥 Doble Vida: {string.Join("; ", c.DoubleLifeEvents)}");
+                }
+
+                if (passed.Any())
+                {
+                    sb.Append($" | Nota amigable (Pasaron del reto): {string.Join(", ", passed)} prefirieron pasar de esta apuesta.");
+                }
+
+                sb.AppendLine();
             }
         }
 
@@ -350,6 +389,40 @@ public class GeminiBulletinNarrativeService : IBulletinNarrativeService
                 notes.Add($"y **{ctx.Humillado[0].Alias}** inauguró la Sala de la Infamia con una amarga goleada");
 
             sbBody.AppendLine($"En los movimientos de la tabla, {string.Join(", ", notes)}. La mesa queda servida para la próxima fecha donde nadie tiene el puesto asegurado.");
+        }
+
+        // Párrafo de Retos y Apuestas Sociales (SPEC-022)
+        if (ctx.Challenges != null && ctx.Challenges.Any())
+        {
+            sbBody.AppendLine();
+            var challengeParts = new List<string>();
+            foreach (var c in ctx.Challenges)
+            {
+                if (c.Status == "RESOLVED_NO_WINNER")
+                {
+                    challengeParts.Add($"en el reto por *\"{c.StakesDescription}\"* ¡nadie le atinó y quedaron para la burla! ({c.ResolutionSummary})");
+                }
+                else if (c.Status == "RESOLVED_WITH_WINNER")
+                {
+                    var winners = string.Join(", ", c.Participants.Where(p => p.Outcome == "WINNER").Select(p => $"**{p.Alias}**"));
+                    var losers = string.Join(", ", c.Participants.Where(p => p.Outcome == "LOSER").Select(p => $"**{p.Alias}**"));
+                    var doubleLife = (c.DoubleLifeEvents != null && c.DoubleLifeEvents.Any())
+                        ? $" (sobreviviendo con ❤️‍🔥 *Doble Vida*: {string.Join(", ", c.DoubleLifeEvents)})"
+                        : string.Empty;
+                    challengeParts.Add($"{winners} cobró la apuesta *\"{c.StakesDescription}\"* ante {losers}{doubleLife}");
+                }
+
+                var passed = c.Participants.Where(p => p.Status is "DECLINED" or "EXPIRED").Select(p => $"**{p.Alias}**").ToList();
+                if (passed.Any())
+                {
+                    challengeParts.Add($"mientras que {string.Join(", ", passed)} amablemente pasaron del reto");
+                }
+            }
+
+            if (challengeParts.Any())
+            {
+                sbBody.AppendLine($"En la arena de los **Retos Sociales**, {string.Join("; ", challengeParts)}.");
+            }
         }
 
         // Párrafo 5: A tener en cuenta para la siguiente jornada

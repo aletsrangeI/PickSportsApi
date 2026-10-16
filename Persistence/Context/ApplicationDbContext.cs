@@ -33,6 +33,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<Pick> Picks { get; set; }
     public DbSet<WeeklyAward> WeeklyAwards { get; set; }
     public DbSet<WeeklyBulletin> WeeklyBulletins { get; set; }
+    public DbSet<QuinielaChallenge> QuinielaChallenges { get; set; }
+    public DbSet<QuinielaChallengeParticipant> QuinielaChallengeParticipants { get; set; }
     public DbSet<PickAuditLog> PickAuditLogs { get; set; }
     public DbSet<PushSubscription> PushSubscriptions { get; set; }
     public DbSet<PushNotificationLog> PushNotificationLogs { get; set; }

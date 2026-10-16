@@ -1,3 +1,5 @@
+using DTO.Challenges;
+
 namespace DTO.Bulletin;
 
 public class LeagueDerbyDto
@@ -37,6 +39,7 @@ public class BulletinNarrativeContextDto
     public List<string> FinishedMatchSummaries { get; set; } = new();
     public int? NextWeekNumber { get; set; }
     public List<string> NextWeekMatchSummaries { get; set; } = new();
+    public List<ChallengeDto> Challenges { get; set; } = new();
 }
 
 public class BulletinNarrativeResultDto

@@ -52,6 +52,8 @@ public static class ConfigureServices
         services.AddSingleton<UseCases.Broadcasters.BroadcastRuleEngine>();
         services.AddScoped<IBroadcastService, UseCases.Broadcasters.BroadcastService>();
         services.AddScoped<ILiguillaApplication, UseCases.Liguilla.LiguillaApplication>();
+        services.AddSingleton<UseCases.Challenges.ChallengeScoringEngine>();
+        services.AddScoped<IChallengeApplication, UseCases.Challenges.ChallengeApplication>();
 
         // Validators
         services.AddTransient<RegisterRequestDtoValidator>();
