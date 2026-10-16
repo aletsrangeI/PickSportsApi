@@ -13,13 +13,16 @@ public class PickApplication : IPickApplication
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly SubmitPickDtoValidator _submitValidator;
+    private readonly IChallengeApplication? _challengeApplication;
 
     public PickApplication(
         IUnitOfWork unitOfWork,
-        SubmitPickDtoValidator submitValidator)
+        SubmitPickDtoValidator submitValidator,
+        IChallengeApplication? challengeApplication = null)
     {
         _unitOfWork = unitOfWork;
         _submitValidator = submitValidator;
+        _challengeApplication = challengeApplication;
     }
 
     public async Task<Response<PickDto>> SubmitPickAsync(int quinielaId, int userId, SubmitPickRequestDto request)
@@ -252,6 +255,10 @@ public class PickApplication : IPickApplication
                 }
                 _unitOfWork.Weeks.Update(week);
                 await _unitOfWork.Save();
+                if (_challengeApplication != null)
+                {
+                    await _challengeApplication.ExpireUnacceptedChallengesAsync(quinielaId, weekId);
+                }
             }
         }
 
@@ -418,6 +425,11 @@ public class PickApplication : IPickApplication
             week.LockedAt = DateTime.UtcNow;
             _unitOfWork.Weeks.Update(week);
             await _unitOfWork.Save();
+        }
+
+        if (_challengeApplication != null)
+        {
+            await _challengeApplication.ExpireUnacceptedChallengesAsync(quinielaId, weekId);
         }
 
         // 4. Reglas deportivas
