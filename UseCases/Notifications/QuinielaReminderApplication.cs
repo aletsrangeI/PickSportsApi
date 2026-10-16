@@ -71,7 +71,7 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         foreach (var quiniela in quinielas)
         {
             // Obtener semanas asociadas a la liga de la quiniela
-            var leagueSeasons = seasons.Where(s => s.LeagueId == quiniela.LeagueId).Select(s => s.Id).ToList();
+            var leagueSeasons = seasons.Where(s => quiniela.LeagueId.HasValue && s.LeagueId == quiniela.LeagueId.Value).Select(s => s.Id).ToList();
             if (!leagueSeasons.Any()) continue;
 
             foreach (var seasonId in leagueSeasons)

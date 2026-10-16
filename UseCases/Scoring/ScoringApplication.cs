@@ -106,7 +106,7 @@ public class ScoringApplication : IScoringApplication
             return response;
         }
 
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
         if (league?.IsPlayoffWeek(week.WeekNumber) == true)
         {
             response.isSuccess = false;

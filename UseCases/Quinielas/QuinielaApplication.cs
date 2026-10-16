@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using Common;
 using Domain.Entities;
+using Domain.Enums;
 using DTO.League;
 using DTO.Quiniela;
 using Interface.Mapping;
@@ -50,22 +51,41 @@ public class QuinielaApplication : IQuinielaApplication
             return response;
         }
 
-        var league = await _unitOfWork.Leagues.GetAsync(request.LeagueId);
-        if (league == null || !league.Active)
-        {
-            response.isSuccess = false;
-            response.Message = "La liga seleccionada no existe o no está activa.";
-            return response;
-        }
+        bool isCustomEvents = string.Equals(request.QuinielaType, "CustomEvents", StringComparison.OrdinalIgnoreCase);
+        string inviteCode;
+        int? leagueId = null;
 
-        // Generar código de invitación único alfanumérico (ej: MX-2026-X9)
-        var inviteCode = await GenerateUniqueInviteCodeAsync(league.Code);
+        if (isCustomEvents)
+        {
+            inviteCode = await GenerateUniqueInviteCodeAsync("EV");
+        }
+        else
+        {
+            if (!request.LeagueId.HasValue || request.LeagueId.Value <= 0)
+            {
+                response.isSuccess = false;
+                response.Message = "Debe seleccionar una liga válida.";
+                return response;
+            }
+
+            var league = await _unitOfWork.Leagues.GetAsync(request.LeagueId.Value);
+            if (league == null || !league.Active)
+            {
+                response.isSuccess = false;
+                response.Message = "La liga seleccionada no existe o no está activa.";
+                return response;
+            }
+
+            leagueId = league.Id;
+            inviteCode = await GenerateUniqueInviteCodeAsync(league.Code);
+        }
 
         var quiniela = new Quiniela
         {
             Name = request.Name.Trim(),
             Description = request.Description?.Trim(),
-            LeagueId = request.LeagueId,
+            QuinielaType = isCustomEvents ? QuinielaType.CustomEvents : QuinielaType.Sports,
+            LeagueId = leagueId,
             OwnerId = userId,
             InviteCode = inviteCode,
             EntryFee = request.EntryFee,
@@ -83,6 +103,11 @@ public class QuinielaApplication : IQuinielaApplication
             response.isSuccess = false;
             response.Message = "Error al crear la quiniela en la base de datos.";
             return response;
+        }
+
+        if (isCustomEvents)
+        {
+            await _unitOfWork.CustomEvents.GetOrCreateEventGroupForQuinielaAsync(quiniela.Id, quiniela.Name);
         }
 
         // Agregar al creador automáticamente como miembro con rol OWNER
@@ -276,6 +301,7 @@ public class QuinielaApplication : IQuinielaApplication
             "mex.1" => "MX",
             "eng.1" => "PL",
             "nfl" => "NFL",
+            "ev" or "events" or "customevents" => "EV",
             _ => "PQ"
         };
 

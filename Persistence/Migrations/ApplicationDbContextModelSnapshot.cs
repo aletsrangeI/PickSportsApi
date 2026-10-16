@@ -156,6 +156,283 @@ namespace Persistence.Migrations
                     b.ToTable("EspnHealthLogs", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.EventGroup", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int?>("QuinielaId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("QuinielaId");
+
+                    b.ToTable("EventGroups", (string)null);
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventOption", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("EventQuestionId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ImageUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool?>("IsCorrect")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("OptionOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<string>("OptionText")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventQuestionId");
+
+                    b.ToTable("EventOptions", (string)null);
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventPick", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("EventOptionId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("EventQuestionId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool?>("IsHit")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("PointsEarned")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<int>("QuinielaMemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("SubmittedAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventOptionId");
+
+                    b.HasIndex("QuinielaMemberId");
+
+                    b.HasIndex("EventQuestionId", "QuinielaMemberId")
+                        .IsUnique();
+
+                    b.ToTable("EventPicks", (string)null);
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventQuestion", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("EventRoundId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Points")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<int>("QuestionOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<string>("QuestionText")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("QuestionType")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)")
+                        .HasDefaultValue("SingleChoice");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventRoundId");
+
+                    b.ToTable("EventQuestions", (string)null);
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventRound", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("EventGroupId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("LockDateUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime?>("ResolvedDateUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<int>("RoundOrder")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasDefaultValue("Open");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventGroupId");
+
+                    b.ToTable("EventRounds", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.FormField", b =>
                 {
                     b.Property<int>("Id")
@@ -733,7 +1010,7 @@ namespace Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<int>("LeagueId")
+                    b.Property<int?>("LeagueId")
                         .HasColumnType("integer");
 
                     b.Property<string>("Name")
@@ -743,6 +1020,11 @@ namespace Persistence.Migrations
 
                     b.Property<int>("OwnerId")
                         .HasColumnType("integer");
+
+                    b.Property<int>("QuinielaType")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
 
                     b.Property<decimal>("SecondPlacePct")
                         .ValueGeneratedOnAdd()
@@ -824,6 +1106,9 @@ namespace Persistence.Migrations
                         .HasColumnType("integer");
 
                     b.Property<int>("TotalHumillaciones")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TotalPoints")
                         .HasColumnType("integer");
 
                     b.Property<int>("TotalUpsets")
@@ -1416,6 +1701,76 @@ namespace Persistence.Migrations
                     b.Navigation("Catalogo");
                 });
 
+            modelBuilder.Entity("Domain.Entities.EventGroup", b =>
+                {
+                    b.HasOne("Domain.Entities.Quiniela", "Quiniela")
+                        .WithMany("EventGroups")
+                        .HasForeignKey("QuinielaId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("Quiniela");
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventOption", b =>
+                {
+                    b.HasOne("Domain.Entities.EventQuestion", "EventQuestion")
+                        .WithMany("Options")
+                        .HasForeignKey("EventQuestionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("EventQuestion");
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventPick", b =>
+                {
+                    b.HasOne("Domain.Entities.EventOption", "EventOption")
+                        .WithMany("Picks")
+                        .HasForeignKey("EventOptionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.EventQuestion", "EventQuestion")
+                        .WithMany("Picks")
+                        .HasForeignKey("EventQuestionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.QuinielaMember", "QuinielaMember")
+                        .WithMany("EventPicks")
+                        .HasForeignKey("QuinielaMemberId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("EventOption");
+
+                    b.Navigation("EventQuestion");
+
+                    b.Navigation("QuinielaMember");
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventQuestion", b =>
+                {
+                    b.HasOne("Domain.Entities.EventRound", "EventRound")
+                        .WithMany("Questions")
+                        .HasForeignKey("EventRoundId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("EventRound");
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventRound", b =>
+                {
+                    b.HasOne("Domain.Entities.EventGroup", "EventGroup")
+                        .WithMany("Rounds")
+                        .HasForeignKey("EventGroupId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("EventGroup");
+                });
+
             modelBuilder.Entity("Domain.Entities.FormField", b =>
                 {
                     b.HasOne("Domain.Entities.Catalogo", "Catalogo")
@@ -1582,8 +1937,7 @@ namespace Persistence.Migrations
                     b.HasOne("Domain.Entities.League", "League")
                         .WithMany("Quinielas")
                         .HasForeignKey("LeagueId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Domain.Entities.User", "Owner")
                         .WithMany("QuinielasOwned")
@@ -1706,6 +2060,28 @@ namespace Persistence.Migrations
                     b.Navigation("Contenidos");
                 });
 
+            modelBuilder.Entity("Domain.Entities.EventGroup", b =>
+                {
+                    b.Navigation("Rounds");
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventOption", b =>
+                {
+                    b.Navigation("Picks");
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventQuestion", b =>
+                {
+                    b.Navigation("Options");
+
+                    b.Navigation("Picks");
+                });
+
+            modelBuilder.Entity("Domain.Entities.EventRound", b =>
+                {
+                    b.Navigation("Questions");
+                });
+
             modelBuilder.Entity("Domain.Entities.FormField", b =>
                 {
                     b.Navigation("Options");
@@ -1733,6 +2109,8 @@ namespace Persistence.Migrations
                 {
                     b.Navigation("AuditLogs");
 
+                    b.Navigation("EventGroups");
+
                     b.Navigation("Members");
 
                     b.Navigation("Picks");
@@ -1744,6 +2122,8 @@ namespace Persistence.Migrations
 
             modelBuilder.Entity("Domain.Entities.QuinielaMember", b =>
                 {
+                    b.Navigation("EventPicks");
+
                     b.Navigation("Picks");
 
                     b.Navigation("WeeklyAwards");

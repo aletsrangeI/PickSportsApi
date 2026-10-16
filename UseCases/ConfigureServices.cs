@@ -51,6 +51,8 @@ public static class ConfigureServices
         services.AddScoped<IQuinielaMigrationService, UseCases.Migration.QuinielaMigrationService>();
         services.AddSingleton<UseCases.Broadcasters.BroadcastRuleEngine>();
         services.AddScoped<IBroadcastService, UseCases.Broadcasters.BroadcastService>();
+        services.AddSingleton<UseCases.CustomEvents.CustomEventScoringEngine>();
+        services.AddScoped<ICustomEventApplication, UseCases.CustomEvents.CustomEventApplication>();
 
         // Validators
         services.AddTransient<RegisterRequestDtoValidator>();

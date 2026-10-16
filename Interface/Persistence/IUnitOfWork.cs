@@ -25,6 +25,9 @@ public interface IUnitOfWork : IDisposable
     IFormFieldRepository FormFields { get; }
     IUserAvatarFileRepository UserAvatarFiles { get; }
 
+    // Custom Events
+    ICustomEventRepository CustomEvents { get; }
+
     Task<int> Save(CancellationToken cancellationToken = default);
     Task BeginTransactionAsync(CancellationToken cancellationToken = default);
     Task CommitTransactionAsync(CancellationToken cancellationToken = default);

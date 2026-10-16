@@ -44,6 +44,13 @@ public class BulletinApplication : IBulletinApplication
             return response;
         }
 
+        if (!quiniela.LeagueId.HasValue)
+        {
+            response.isSuccess = false;
+            response.Message = "El boletín no está disponible para quinielas sin liga deportiva.";
+            return response;
+        }
+
         Week? week;
         if (weekId.HasValue && weekId.Value > 0)
         {
@@ -51,7 +58,7 @@ public class BulletinApplication : IBulletinApplication
         }
         else
         {
-            week = await ResolveLatestEditionWeekAsync(quiniela.LeagueId);
+            week = await ResolveLatestEditionWeekAsync(quiniela.LeagueId.Value);
         }
 
         if (week == null)
@@ -158,6 +165,13 @@ public class BulletinApplication : IBulletinApplication
             return response;
         }
 
+        if (!quiniela.LeagueId.HasValue)
+        {
+            response.isSuccess = false;
+            response.Message = "El boletín no está disponible para quinielas sin liga deportiva.";
+            return response;
+        }
+
         var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
         if (membership == null || (membership.Role != "ADMIN" && membership.Role != "OWNER"))
         {
@@ -237,6 +251,13 @@ public class BulletinApplication : IBulletinApplication
         {
             response.isSuccess = false;
             response.Message = "Quiniela no encontrada.";
+            return response;
+        }
+
+        if (!quiniela.LeagueId.HasValue)
+        {
+            response.isSuccess = false;
+            response.Message = "El boletín no está disponible para quinielas sin liga deportiva.";
             return response;
         }
 
@@ -323,6 +344,13 @@ public class BulletinApplication : IBulletinApplication
         {
             response.isSuccess = false;
             response.Message = "Quiniela no encontrada.";
+            return response;
+        }
+
+        if (!quiniela.LeagueId.HasValue)
+        {
+            response.isSuccess = false;
+            response.Message = "El boletín no está disponible para quinielas sin liga deportiva.";
             return response;
         }
 

@@ -73,7 +73,7 @@ public class PickApplication : IPickApplication
         }
 
         // Regla: Las jornadas de Liguilla no forman parte de la quiniela de temporada regular (SPEC-020)
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
         if (league?.IsPlayoffWeek(week.WeekNumber) == true)
         {
             response.isSuccess = false;
@@ -341,7 +341,7 @@ public class PickApplication : IPickApplication
         });
 
         // 7. Deporte y Empate
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
         var sport = league != null ? await _unitOfWork.Sports.GetAsync(league.SportId) : null;
         bool allowsDraw = sport?.HasDraw ?? true;
 
@@ -403,7 +403,7 @@ public class PickApplication : IPickApplication
         }
 
         // Las jornadas de Liguilla no se bloquean ni autollenan en la quiniela de temporada regular (SPEC-020)
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
         if (league?.IsPlayoffWeek(week.WeekNumber) == true)
         {
             response.isSuccess = false;
