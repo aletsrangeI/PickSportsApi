@@ -59,12 +59,14 @@ public class SystemController : ControllerBase
                 .ToDictionaryAsync(c => c.Key, c => c.Value);
 
             var apiVersion = _configuration["App:ApiVersion"] ?? "1.0.0";
-            var latestClient = configs.GetValueOrDefault("App:LatestClientVersion")
-                               ?? _configuration["App:LatestClientVersion"]
-                               ?? "1.0.0";
-            var minSupported = configs.GetValueOrDefault("App:MinSupportedClientVersion")
-                               ?? _configuration["App:MinSupportedClientVersion"]
-                               ?? "1.0.0";
+            var configLatest = _configuration["App:LatestClientVersion"] ?? "1.0.0";
+            var configMin = _configuration["App:MinSupportedClientVersion"] ?? "1.0.0";
+
+            var dbLatest = configs.GetValueOrDefault("App:LatestClientVersion");
+            var dbMin = configs.GetValueOrDefault("App:MinSupportedClientVersion");
+
+            var latestClient = MaxVersion(configLatest, dbLatest);
+            var minSupported = MaxVersion(configMin, dbMin);
             var maintenanceStr = configs.GetValueOrDefault("App:MaintenanceMode")
                                  ?? _configuration["App:MaintenanceMode"]
                                  ?? "false";
@@ -106,5 +108,16 @@ public class SystemController : ControllerBase
 
             return Ok(fallbackDto);
         }
+    }
+
+    private static string MaxVersion(string? v1, string? v2)
+    {
+        if (string.IsNullOrWhiteSpace(v1)) return v2 ?? "1.0.0";
+        if (string.IsNullOrWhiteSpace(v2)) return v1;
+        if (Version.TryParse(v1, out var parsed1) && Version.TryParse(v2, out var parsed2))
+        {
+            return parsed1 >= parsed2 ? v1 : v2;
+        }
+        return string.Compare(v1, v2, StringComparison.OrdinalIgnoreCase) >= 0 ? v1 : v2;
     }
 }
