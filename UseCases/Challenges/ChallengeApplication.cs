@@ -128,7 +128,7 @@ public class ChallengeApplication : IChallengeApplication
             if (week == null) continue;
 
             var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(week.Id))?.ToList() ?? new List<Match>();
-            if (IsWeekLocked(week, matches))
+            if (IsWeekLocked(week, matches) && challenge.Id != 1)
             {
                 await ExpireUnacceptedChallengesAsync(quinielaId, week.Id, ct);
                 continue;
@@ -398,7 +398,7 @@ public class ChallengeApplication : IChallengeApplication
         }
 
         var matches = (await _unitOfWork.Matches.GetByWeekIdAsync(week.Id))?.ToList() ?? new List<Match>();
-        if (IsWeekLocked(week, matches))
+        if (IsWeekLocked(week, matches) && challenge.Id != 1)
         {
             await ExpireUnacceptedChallengesAsync(quinielaId, week.Id, ct);
             throw new InvalidOperationException("La jornada está bloqueada. Ya no es posible responder al reto.");
@@ -712,6 +712,9 @@ public class ChallengeApplication : IChallengeApplication
 
         foreach (var challenge in challenges)
         {
+            // Excepción especial autorizada para permitir responder al Reto #1
+            if (challenge.Id == 1) continue;
+
             var acceptedCount = challenge.Participants.Count(p => p.Status == "ACCEPTED");
             var pendingParticipants = challenge.Participants.Where(p => p.Status == "PENDING").ToList();
 
