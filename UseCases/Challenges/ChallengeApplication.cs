@@ -31,8 +31,8 @@ public class ChallengeApplication : IChallengeApplication
     private readonly ChallengeScoringEngine _challengeScoringEngine;
     private readonly ScoringEngine _scoringEngine;
     private readonly IWebPushNotificationService? _webPushService;
-    // En modo pre-lanzamiento mantenemos las notificaciones push de retos desactivadas para pruebas
-    private readonly bool _enableChallengePushNotifications = false;
+    // Notificaciones Web Push activas para retos y duelos
+    private readonly bool _enableChallengePushNotifications = true;
 
     public ChallengeApplication(
         IUnitOfWork unitOfWork,
