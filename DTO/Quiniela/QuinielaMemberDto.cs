@@ -8,6 +8,7 @@ public class QuinielaMemberDto
     public string Alias { get; set; } = null!;
     public string Role { get; set; } = "MEMBER";
     public bool PaidFee { get; set; }
+    public int TotalPoints { get; set; }
     public int TotalHits { get; set; }
     public int TotalUpsets { get; set; }
     public int TotalHumillaciones { get; set; }

@@ -5,7 +5,8 @@ public class QuinielaResponseDto
     public int Id { get; set; }
     public string Name { get; set; } = null!;
     public string? Description { get; set; }
-    public int LeagueId { get; set; }
+    public string QuinielaType { get; set; } = "Sports";
+    public int? LeagueId { get; set; }
     public string LeagueCode { get; set; } = null!;
     public string LeagueName { get; set; } = null!;
     public string SportName { get; set; } = null!;

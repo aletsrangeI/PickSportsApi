@@ -14,6 +14,7 @@ public interface IUnitOfWork : IDisposable
     IPickRepository Picks { get; }
     IWeeklyAwardRepository WeeklyAwards { get; }
     IWeeklyBulletinRepository WeeklyBulletins { get; }
+    IChallengeRepository Challenges { get; }
     IPickAuditLogRepository PickAuditLogs { get; }
     IPushSubscriptionRepository PushSubscriptions { get; }
     IPushNotificationLogRepository PushNotificationLogs { get; }
@@ -25,6 +26,9 @@ public interface IUnitOfWork : IDisposable
     IContenidoCatalogoRepository ContenidoCatalogos { get; }
     IFormFieldRepository FormFields { get; }
     IUserAvatarFileRepository UserAvatarFiles { get; }
+
+    // Custom Events
+    ICustomEventRepository CustomEvents { get; }
 
     Task<int> Save(CancellationToken cancellationToken = default);
     Task BeginTransactionAsync(CancellationToken cancellationToken = default);
