@@ -109,7 +109,21 @@ jobs:
           if [ -f /opt/picksports/export-secrets.sh ]; then
             bash /opt/picksports/export-secrets.sh || echo ">> ADVERTENCIA: Falló la exportación de Infisical, usando .env existente."
           fi
-          docker compose pull api
+          echo ">> Descargando imagen Docker de picksports-api desde ghcr.io..."
+          PULL_OK=0
+          for p in $(seq 1 6); do
+            if docker compose pull api; then
+              PULL_OK=1
+              echo ">> Imagen descargada exitosamente en intento $p."
+              break
+            fi
+            echo ">> Intento $p/6 falló con timeout/error de red en ghcr.io. Reintentando en 8 segundos..."
+            sleep 8
+          done
+          if [ "$PULL_OK" -ne 1 ]; then
+            echo ">> Error crítico: No se pudo descargar la imagen desde ghcr.io tras 6 intentos."
+            exit 1
+          fi
           
           echo ">> === DIAGNÓSTICO PREVIO DE PUERTO 5287 ==="
           ss -tulpn | grep 5287 || echo ">> (ss) Ningún socket estándar detectado en 5287"
