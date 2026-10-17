@@ -107,6 +107,85 @@ public class QuinielaApplicationTests
     }
 
     [Fact]
+    public async Task CreateAsync_WithCustomEventsType_CreatesQuinielaWithEVPrefixAndEventGroup()
+    {
+        // Arrange
+        var user = new User
+        {
+            Id = 1,
+            Username = "alex",
+            DisplayName = "Alex G",
+            Active = true
+        };
+
+        _unitOfWorkMock.Setup(u => u.Users.GetAsync(1)).ReturnsAsync(user);
+        _unitOfWorkMock.Setup(u => u.Quinielas.GetByInviteCodeAsync(It.IsAny<string>()))
+            .ReturnsAsync((Quiniela?)null);
+
+        Quiniela? savedQuiniela = null;
+        _unitOfWorkMock.Setup(u => u.Quinielas.InsertAsync(It.IsAny<Quiniela>()))
+            .Callback<Quiniela>(q => { savedQuiniela = q; q.Id = 88; })
+            .ReturnsAsync(true);
+
+        QuinielaMember? savedMember = null;
+        _unitOfWorkMock.Setup(u => u.QuinielaMembers.InsertAsync(It.IsAny<QuinielaMember>()))
+            .Callback<QuinielaMember>(m => { savedMember = m; m.Id = 102; })
+            .ReturnsAsync(true);
+
+        _unitOfWorkMock.Setup(u => u.CustomEvents.GetOrCreateEventGroupForQuinielaAsync(88, "La Casa de los Famosos 2026"))
+            .ReturnsAsync(new EventGroup { Id = 1, QuinielaId = 88, Title = "La Casa de los Famosos 2026" });
+
+        _unitOfWorkMock.Setup(u => u.Quinielas.GetWithDetailsAsync(88))
+            .ReturnsAsync(() => new Quiniela
+            {
+                Id = 88,
+                Name = "La Casa de los Famosos 2026",
+                QuinielaType = Domain.Enums.QuinielaType.CustomEvents,
+                LeagueId = null,
+                League = null,
+                OwnerId = 1,
+                Owner = user,
+                InviteCode = savedQuiniela!.InviteCode,
+                EntryFee = 150m,
+                FirstPlacePct = 70m,
+                SecondPlacePct = 20m,
+                ThirdPlacePct = 10m,
+                IsActive = true,
+                Members = new List<QuinielaMember> { savedMember! }
+            });
+
+        var app = new QuinielaApplication(_unitOfWorkMock.Object, _mapper, _createValidator, _joinValidator);
+
+        // Act
+        var result = await app.CreateAsync(1, new CreateQuinielaDto
+        {
+            Name = "La Casa de los Famosos 2026",
+            QuinielaType = "CustomEvents",
+            LeagueId = null,
+            EntryFee = 150m,
+            FirstPlacePct = 70m,
+            SecondPlacePct = 20m,
+            ThirdPlacePct = 10m
+        });
+
+        // Assert
+        Assert.True(result.isSuccess);
+        Assert.NotNull(result.Data);
+        Assert.StartsWith("EV-", result.Data.InviteCode);
+        Assert.Equal("CustomEvents", result.Data.QuinielaType);
+        Assert.Null(result.Data.LeagueId);
+        Assert.Equal("EVENTS", result.Data.LeagueCode);
+        Assert.Equal("Eventos Personalizados", result.Data.LeagueName);
+        Assert.Equal("Especial", result.Data.SportName);
+
+        Assert.NotNull(savedQuiniela);
+        Assert.Equal(Domain.Enums.QuinielaType.CustomEvents, savedQuiniela.QuinielaType);
+        Assert.Null(savedQuiniela.LeagueId);
+
+        _unitOfWorkMock.Verify(u => u.CustomEvents.GetOrCreateEventGroupForQuinielaAsync(88, "La Casa de los Famosos 2026"), Times.Once);
+    }
+
+    [Fact]
     public async Task JoinAsync_WithValidInviteCode_AddsMemberWithRoleMember()
     {
         // Arrange (Escenario 3)

@@ -52,6 +52,7 @@ public static class ConfigureServices
         services.AddScoped<IPushSubscriptionRepository, PushSubscriptionRepository>();
         services.AddScoped<IPushNotificationLogRepository, PushNotificationLogRepository>();
         services.AddScoped<IEspnHealthLogRepository, EspnHealthLogRepository>();
+        services.AddScoped<ICustomEventRepository, CustomEventRepository>();
 
         // Dynamic Form Repositories
         services.AddScoped<ICatalogoRepository, CatalogoRepository>();

@@ -1,4 +1,5 @@
 using Domain.Entities;
+using Domain.Enums;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
@@ -17,12 +18,14 @@ public class QuinielaConfiguration : IEntityTypeConfiguration<Quiniela>
         builder.Property(q => q.FirstPlacePct).HasPrecision(5, 2).HasDefaultValue(70.00m);
         builder.Property(q => q.SecondPlacePct).HasPrecision(5, 2).HasDefaultValue(20.00m);
         builder.Property(q => q.ThirdPlacePct).HasPrecision(5, 2).HasDefaultValue(10.00m);
+        builder.Property(q => q.QuinielaType).HasDefaultValue(QuinielaType.Sports);
 
         builder.HasIndex(q => q.InviteCode).IsUnique();
 
         builder.HasOne(q => q.League)
             .WithMany(l => l.Quinielas)
             .HasForeignKey(q => q.LeagueId)
+            .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
 
         builder.HasOne(q => q.Owner)

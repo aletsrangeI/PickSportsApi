@@ -47,6 +47,7 @@ public partial class AppMapper : IAppMapper
             Alias = entity.Alias,
             Role = entity.Role,
             PaidFee = entity.PaidFee,
+            TotalPoints = entity.TotalPoints,
             TotalHits = entity.TotalHits,
             TotalUpsets = entity.TotalUpsets,
             TotalHumillaciones = entity.TotalHumillaciones,
@@ -68,15 +69,20 @@ public partial class AppMapper : IAppMapper
     public QuinielaResponseDto ToResponseDTO(Quiniela entity)
     {
         if (entity == null) return null!;
+        var leagueCode = entity.League != null ? entity.League.Code : (entity.QuinielaType == Domain.Enums.QuinielaType.CustomEvents ? "EVENTS" : string.Empty);
+        var leagueName = entity.League != null ? entity.League.Name : (entity.QuinielaType == Domain.Enums.QuinielaType.CustomEvents ? "Eventos Personalizados" : string.Empty);
+        var sportName = entity.League?.Sport != null ? entity.League.Sport.Name : (entity.QuinielaType == Domain.Enums.QuinielaType.CustomEvents ? "Especial" : string.Empty);
+
         return new QuinielaResponseDto
         {
             Id = entity.Id,
             Name = entity.Name,
             Description = entity.Description,
+            QuinielaType = entity.QuinielaType.ToString(),
             LeagueId = entity.LeagueId,
-            LeagueCode = entity.League != null ? entity.League.Code : string.Empty,
-            LeagueName = entity.League != null ? entity.League.Name : string.Empty,
-            SportName = entity.League?.Sport != null ? entity.League.Sport.Name : string.Empty,
+            LeagueCode = leagueCode,
+            LeagueName = leagueName,
+            SportName = sportName,
             InviteCode = entity.InviteCode,
             EntryFee = entity.EntryFee,
             FirstPlacePct = entity.FirstPlacePct,
@@ -105,6 +111,7 @@ public partial class AppMapper : IAppMapper
             Id = baseDto.Id,
             Name = baseDto.Name,
             Description = baseDto.Description,
+            QuinielaType = baseDto.QuinielaType,
             LeagueId = baseDto.LeagueId,
             LeagueCode = baseDto.LeagueCode,
             LeagueName = baseDto.LeagueName,

@@ -13,13 +13,16 @@ public class PickApplication : IPickApplication
 {
     private readonly IUnitOfWork _unitOfWork;
     private readonly SubmitPickDtoValidator _submitValidator;
+    private readonly IChallengeApplication? _challengeApplication;
 
     public PickApplication(
         IUnitOfWork unitOfWork,
-        SubmitPickDtoValidator submitValidator)
+        SubmitPickDtoValidator submitValidator,
+        IChallengeApplication? challengeApplication = null)
     {
         _unitOfWork = unitOfWork;
         _submitValidator = submitValidator;
+        _challengeApplication = challengeApplication;
     }
 
     public async Task<Response<PickDto>> SubmitPickAsync(int quinielaId, int userId, SubmitPickRequestDto request)
@@ -72,8 +75,15 @@ public class PickApplication : IPickApplication
             return response;
         }
 
+        if (quiniela.QuinielaType == Domain.Enums.QuinielaType.CustomEvents)
+        {
+            response.isSuccess = false;
+            response.Message = "Esta quiniela es de Eventos Personalizados. Los pronósticos se realizan en el módulo de eventos.";
+            return response;
+        }
+
         // Regla: Las jornadas de Liguilla no forman parte de la quiniela de temporada regular (SPEC-020)
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
         if (league?.IsPlayoffWeek(week.WeekNumber) == true)
         {
             response.isSuccess = false;
@@ -252,6 +262,10 @@ public class PickApplication : IPickApplication
                 }
                 _unitOfWork.Weeks.Update(week);
                 await _unitOfWork.Save();
+                if (_challengeApplication != null)
+                {
+                    await _challengeApplication.ExpireUnacceptedChallengesAsync(quinielaId, weekId);
+                }
             }
         }
 
@@ -341,7 +355,7 @@ public class PickApplication : IPickApplication
         });
 
         // 7. Deporte y Empate
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
         var sport = league != null ? await _unitOfWork.Sports.GetAsync(league.SportId) : null;
         bool allowsDraw = sport?.HasDraw ?? true;
 
@@ -394,6 +408,13 @@ public class PickApplication : IPickApplication
             return response;
         }
 
+        if (quiniela.QuinielaType == Domain.Enums.QuinielaType.CustomEvents)
+        {
+            response.isSuccess = false;
+            response.Message = "El autollenado deportivo no aplica a quinielas de Eventos Personalizados.";
+            return response;
+        }
+
         var week = await _unitOfWork.Weeks.GetAsync(weekId);
         if (week == null)
         {
@@ -403,7 +424,7 @@ public class PickApplication : IPickApplication
         }
 
         // Las jornadas de Liguilla no se bloquean ni autollenan en la quiniela de temporada regular (SPEC-020)
-        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId);
+        var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
         if (league?.IsPlayoffWeek(week.WeekNumber) == true)
         {
             response.isSuccess = false;
@@ -418,6 +439,11 @@ public class PickApplication : IPickApplication
             week.LockedAt = DateTime.UtcNow;
             _unitOfWork.Weeks.Update(week);
             await _unitOfWork.Save();
+        }
+
+        if (_challengeApplication != null)
+        {
+            await _challengeApplication.ExpireUnacceptedChallengesAsync(quinielaId, weekId);
         }
 
         // 4. Reglas deportivas

@@ -22,6 +22,7 @@ public class UnitOfWork : IUnitOfWork
         Picks = new PickRepository(_dbContext);
         WeeklyAwards = new WeeklyAwardRepository(_dbContext);
         WeeklyBulletins = new WeeklyBulletinRepository(_dbContext);
+        Challenges = new ChallengeRepository(_dbContext);
         PickAuditLogs = new PickAuditLogRepository(_dbContext);
         PushSubscriptions = new PushSubscriptionRepository(_dbContext);
         PushNotificationLogs = new PushNotificationLogRepository(_dbContext);
@@ -30,6 +31,7 @@ public class UnitOfWork : IUnitOfWork
         ContenidoCatalogos = new ContenidoCatalogoRepository(_dbContext);
         FormFields = new FormFieldRepository(_dbContext);
         UserAvatarFiles = new UserAvatarFileRepository(_dbContext);
+        CustomEvents = new CustomEventRepository(_dbContext);
         Liguilla = new LiguillaRepository(_dbContext);
     }
 
@@ -45,6 +47,7 @@ public class UnitOfWork : IUnitOfWork
     public IPickRepository Picks { get; }
     public IWeeklyAwardRepository WeeklyAwards { get; }
     public IWeeklyBulletinRepository WeeklyBulletins { get; }
+    public IChallengeRepository Challenges { get; }
     public IPickAuditLogRepository PickAuditLogs { get; }
     public IPushSubscriptionRepository PushSubscriptions { get; }
     public IPushNotificationLogRepository PushNotificationLogs { get; }
@@ -54,6 +57,7 @@ public class UnitOfWork : IUnitOfWork
     public IContenidoCatalogoRepository ContenidoCatalogos { get; }
     public IFormFieldRepository FormFields { get; }
     public IUserAvatarFileRepository UserAvatarFiles { get; }
+    public ICustomEventRepository CustomEvents { get; }
 
     private Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? _currentTransaction;
 
