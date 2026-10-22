@@ -553,5 +553,50 @@ public class ChallengeScoringEngineTests
         takenGoals.Should().BeEquivalentTo(new[] { "24", "28" });
     }
 
+    [Theory]
+    [InlineData(27, 28, false)] // 27 no se pasa de 28
+    [InlineData(22, 28, false)] // 22 no se pasa de 28
+    [InlineData(28, 28, false)] // Exacto 28 no se pasa
+    [InlineData(29, 28, true)]  // 29 sí se pasa de 28
+    [InlineData(35, 25, true)]  // 35 sí se pasa de 25
+    public void IsPriceIsRightBusted_InvarianteEstricto(int predicted, int actual, bool expectedBusted)
+    {
+        ChallengeScoringEngine.IsPriceIsRightBusted(predicted, actual).Should().Be(expectedBusted);
+    }
+
+    [Fact]
+    public void EvaluateLiveState_ResolvedChallenge_WinnerCanNeverBeBusted()
+    {
+        // ARRANGE: Caso real Alex (27) vs Oso (22), total real: 28 goles, Alex ganó
+        var challengeDto = new ChallengeDto
+        {
+            Id = 2,
+            ChallengeType = "TOTAL_GOALS",
+            Status = "RESOLVED_WITH_WINNER",
+            Participants = new List<ChallengeParticipantDto>
+            {
+                new() { MemberId = 4, Alias = "Alex", Status = "ACCEPTED", PredictedTotalGoals = 27, Outcome = "WINNER" },
+                new() { MemberId = 10, Alias = "Oso", Status = "ACCEPTED", PredictedTotalGoals = 22, Outcome = "LOSER" }
+            }
+        };
+
+        var matches = new List<Match>
+        {
+            new() { Id = 1, HomeScore = 15, AwayScore = 13 } // Total 28 goles
+        };
+
+        // ACT
+        _engine.EvaluateLiveState(challengeDto, matches, Enumerable.Empty<Pick>());
+
+        // ASSERT: Ningún ganador puede estar marcado como IsBusted, ni Oso se pasó (22 <= 28)
+        var alex = challengeDto.Participants.First(p => p.MemberId == 4);
+        var oso = challengeDto.Participants.First(p => p.MemberId == 10);
+
+        alex.IsBusted.Should().BeFalse("un ganador nunca puede estar descalificado o marcado como 'busted'");
+        alex.CurrentLiveValue.Should().BeNull("en retos resueltos no debe haber texto residual de en vivo");
+        oso.IsBusted.Should().BeFalse("22 goles es menor al total real de 28, por lo que no se pasó");
+        oso.CurrentLiveValue.Should().BeNull();
+    }
+
     #endregion
 }

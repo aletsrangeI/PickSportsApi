@@ -101,6 +101,11 @@ public class ChallengeScoringEngine
 
     #region Resolutores Específicos
 
+    /// <summary>
+    /// Regla Price is Right estricta: un participante se pasa únicamente si predijo más goles que el total real.
+    /// </summary>
+    public static bool IsPriceIsRightBusted(int predictedGoals, int actualGoals) => predictedGoals > actualGoals;
+
     private ChallengeResolutionResult ResolveWeeklyRankChallenge(
         QuinielaChallenge challenge,
         List<QuinielaChallengeParticipant> participants,
@@ -521,7 +526,7 @@ public class ChallengeScoringEngine
         var evaluations = participants.Select(p =>
         {
             int pred = p.PredictedTotalGoals ?? 0;
-            bool isBusted = pred > actualTotalGoals;
+            bool isBusted = IsPriceIsRightBusted(pred, actualTotalGoals);
             int diff = actualTotalGoals - pred; // diff >= 0 si no se pasó
             return new
             {
@@ -623,18 +628,39 @@ public class ChallengeScoringEngine
         int currentGoals = matches.Sum(m => m.HomeScore + m.AwayScore);
         challengeDto.ActualTotalGoals = currentGoals;
 
+        bool isResolved = string.Equals(challengeDto.Status, "RESOLVED_WITH_WINNER", StringComparison.OrdinalIgnoreCase) ||
+                          string.Equals(challengeDto.Status, "RESOLVED_NO_WINNER", StringComparison.OrdinalIgnoreCase);
+
         foreach (var p in participants)
         {
             int pred = p.PredictedTotalGoals ?? 0;
-            if (currentGoals > pred)
+
+            // Si el reto ya está finalizado y el participante es ganador, jamás está "busted" ni lleva live pill
+            if (isResolved && string.Equals(p.Outcome, "WINNER", StringComparison.OrdinalIgnoreCase))
             {
-                p.IsBusted = true;
-                p.CurrentLiveValue = $"💥 Se pasó ({pred} goles, van {currentGoals})";
+                p.IsBusted = false;
+                p.CurrentLiveValue = null;
+                continue;
+            }
+
+            if (isResolved)
+            {
+                // Regla Price is Right: se pasa únicamente quien predijo más goles que el total real
+                p.IsBusted = IsPriceIsRightBusted(pred, currentGoals);
+                p.CurrentLiveValue = null;
             }
             else
             {
-                p.IsBusted = false;
-                p.CurrentLiveValue = $"Predijo {pred} goles (Faltan {pred - currentGoals})";
+                if (currentGoals > pred)
+                {
+                    p.IsBusted = true;
+                    p.CurrentLiveValue = $"💥 Se pasó ({pred} goles, van {currentGoals})";
+                }
+                else
+                {
+                    p.IsBusted = false;
+                    p.CurrentLiveValue = $"Predijo {pred} goles (Faltan {pred - currentGoals})";
+                }
             }
         }
     }
