@@ -56,6 +56,8 @@ public static class ConfigureServices
         services.AddScoped<ILiguillaApplication, UseCases.Liguilla.LiguillaApplication>();
         services.AddSingleton<UseCases.Challenges.ChallengeScoringEngine>();
         services.AddScoped<IChallengeApplication, UseCases.Challenges.ChallengeApplication>();
+        services.AddSingleton<UseCases.Wrapped.SeasonWrappedEngine>();
+        services.AddScoped<IWrappedApplication, UseCases.Wrapped.WrappedApplication>();
 
         // Validators
         services.AddTransient<RegisterRequestDtoValidator>();

@@ -33,6 +33,7 @@ public class UnitOfWork : IUnitOfWork
         UserAvatarFiles = new UserAvatarFileRepository(_dbContext);
         CustomEvents = new CustomEventRepository(_dbContext);
         Liguilla = new LiguillaRepository(_dbContext);
+        SeasonWrappedSnapshots = new SeasonWrappedSnapshotRepository(_dbContext);
     }
 
     public IUserRepository Users { get; }
@@ -53,6 +54,7 @@ public class UnitOfWork : IUnitOfWork
     public IPushNotificationLogRepository PushNotificationLogs { get; }
     public IEspnHealthLogRepository EspnHealthLogs { get; }
     public ILiguillaRepository Liguilla { get; }
+    public ISeasonWrappedSnapshotRepository SeasonWrappedSnapshots { get; }
     public ICatalogoRepository Catalogos { get; }
     public IContenidoCatalogoRepository ContenidoCatalogos { get; }
     public IFormFieldRepository FormFields { get; }

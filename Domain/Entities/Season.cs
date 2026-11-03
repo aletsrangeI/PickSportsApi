@@ -9,6 +9,9 @@ public class Season : BaseAuditableEntity
     public int SeasonType { get; set; } = 1;
     public string Name { get; set; } = null!;
     public bool IsCurrent { get; set; }
+    /// <summary>SPEC-014: el administrador marca la temporada como finalizada para habilitar el Wrapped.</summary>
+    public bool IsFinished { get; set; }
+    public DateTime? FinishedAtUtc { get; set; }
     /// <summary>Fecha de inicio de la temporada (primer partido). Requerida para fallback L2.</summary>
     public DateTime? StartDate { get; set; }
     /// <summary>Fecha de fin de la temporada (último partido). Requerida para fallback L2.</summary>

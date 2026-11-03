@@ -1477,7 +1477,13 @@ namespace Persistence.Migrations
                     b.Property<DateTime?>("EndDate")
                         .HasColumnType("timestamp without time zone");
 
+                    b.Property<DateTime?>("FinishedAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
                     b.Property<bool>("IsCurrent")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsFinished")
                         .HasColumnType("boolean");
 
                     b.Property<DateTime?>("LastModified")
@@ -1510,6 +1516,59 @@ namespace Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("Seasons", (string)null);
+                });
+
+            modelBuilder.Entity("Domain.Entities.SeasonWrappedSnapshot", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("GeneratedAtUtc")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("QuinielaId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SeasonId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("WrappedPayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SeasonId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("QuinielaId", "SeasonId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("SeasonWrappedSnapshots", (string)null);
                 });
 
             modelBuilder.Entity("Domain.Entities.SelectFormOption", b =>
@@ -2418,6 +2477,33 @@ namespace Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("League");
+                });
+
+            modelBuilder.Entity("Domain.Entities.SeasonWrappedSnapshot", b =>
+                {
+                    b.HasOne("Domain.Entities.Quiniela", "Quiniela")
+                        .WithMany()
+                        .HasForeignKey("QuinielaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.Season", "Season")
+                        .WithMany()
+                        .HasForeignKey("SeasonId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Quiniela");
+
+                    b.Navigation("Season");
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("Domain.Entities.SelectFormOption", b =>
