@@ -19,8 +19,13 @@ public class JwtTokenGenerator : IJwtTokenGenerator
 
     public string GenerateToken(User user)
     {
-        var secret = _configuration["Config:Secret"] 
-            ?? "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        // Sin valor por defecto: un secreto de respaldo en el código permitiría firmar tokens con un valor conocido.
+        var secret = _configuration["Config:Secret"];
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            throw new InvalidOperationException("Config:Secret no está configurado; no se puede firmar el token JWT.");
+        }
+
         var issuer = _configuration["Config:Issuer"] ?? "OrionSys";
         var audience = _configuration["Config:Audience"] ?? "OrionSys";
 

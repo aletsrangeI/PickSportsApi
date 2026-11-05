@@ -20,6 +20,9 @@ public class WebPushNotificationService : IWebPushNotificationService
     private readonly string _privateKey;
     private readonly bool _isEnabled;
 
+    // SPEC-023: lista de usuarios permitidos para push (vacía = sin filtro, comportamiento de producción).
+    private readonly HashSet<int> _allowedUserIds;
+
     public WebPushNotificationService(
         IUnitOfWork unitOfWork,
         IConfiguration configuration,
@@ -33,19 +36,54 @@ public class WebPushNotificationService : IWebPushNotificationService
         _publicKey = _configuration["Vapid:PublicKey"] ?? string.Empty;
         _privateKey = _configuration["Vapid:PrivateKey"] ?? string.Empty;
 
-        _isEnabled = !string.IsNullOrWhiteSpace(_publicKey) && !string.IsNullOrWhiteSpace(_privateKey);
+        // Clave ausente = encendido, para que producción se comporte igual que antes.
+        var pushEnabledByConfig = !bool.TryParse(_configuration["Push:Enabled"], out var pushEnabled) || pushEnabled;
+        var hasVapidKeys = !string.IsNullOrWhiteSpace(_publicKey) && !string.IsNullOrWhiteSpace(_privateKey);
 
-        if (!_isEnabled)
+        _isEnabled = pushEnabledByConfig && hasVapidKeys;
+        _allowedUserIds = ReadAllowedUserIds(_configuration);
+
+        if (!pushEnabledByConfig)
+        {
+            _logger.LogInformation("[WebPush] Push deshabilitado por configuración (Push:Enabled=false).");
+        }
+        else if (!hasVapidKeys)
         {
             _logger.LogWarning("[WebPush] VAPID keys no están configuradas en appsettings. Las notificaciones push estarán deshabilitadas.");
         }
     }
+
+    private static HashSet<int> ReadAllowedUserIds(IConfiguration configuration)
+    {
+        var ids = new HashSet<int>();
+        var section = configuration.GetSection("Push:AllowedUserIds");
+        if (section is null) return ids;
+
+        // Admite el formato de arreglo (Push:AllowedUserIds:0=1) y una lista separada por comas.
+        foreach (var child in section.GetChildren())
+        {
+            if (int.TryParse(child.Value, out var id)) ids.Add(id);
+        }
+
+        if (!string.IsNullOrWhiteSpace(section.Value))
+        {
+            foreach (var part in section.Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (int.TryParse(part, out var id)) ids.Add(id);
+            }
+        }
+
+        return ids;
+    }
+
+    private bool IsUserAllowed(int userId) => _allowedUserIds.Count == 0 || _allowedUserIds.Contains(userId);
 
     public string GetVapidPublicKey() => _publicKey;
 
     public async Task<int> SendNotificationToUserAsync(int userId, PushNotificationPayload payload, CancellationToken ct = default)
     {
         if (!_isEnabled) return 0;
+        if (!IsUserAllowed(userId)) return 0;
 
         var subscriptions = (await _unitOfWork.PushSubscriptions.GetActiveSubscriptionsByUserAsync(userId)).ToList();
         if (subscriptions.Count == 0) return 0;
@@ -69,7 +107,9 @@ public class WebPushNotificationService : IWebPushNotificationService
     {
         if (!_isEnabled) return 0;
 
-        var subscriptions = (await _unitOfWork.PushSubscriptions.GetActiveSubscriptionsByQuinielaAsync(quinielaId)).ToList();
+        var subscriptions = (await _unitOfWork.PushSubscriptions.GetActiveSubscriptionsByQuinielaAsync(quinielaId))
+            .Where(s => IsUserAllowed(s.UserId))
+            .ToList();
         if (subscriptions.Count == 0) return 0;
 
         return await SendToSubscriptionsAsync(subscriptions, payload, ct);
