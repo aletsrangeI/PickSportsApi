@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using DTO.Wrapped;
 using FluentAssertions;
 using UseCases.Wrapped;
@@ -643,9 +643,114 @@ public class SeasonWrappedEngineTests
         result.Slides[1].StoryId.Should().Be("S-02");
         result.Slides[1].SlideType.Should().Be("ARCHETYPE");
         result.Slides.Should().OnlyContain(s => !string.IsNullOrWhiteSpace(s.BackgroundGradient));
-        StoryIdsOf(result).Should().Equal("S-01", "S-02", "S-03", "S-04", "S-05", "S-08", "S-12");
+        // Con un solo pick no hay promedio de anticipación que valga: S-08 no aparece.
+        StoryIdsOf(result).Should().Equal("S-01", "S-02", "S-03", "S-04", "S-05", "S-12", "S-15");
         StatOf(result, "Puntos").Should().Be("1");
         StatOf(result, "Efectividad").Should().Be("100%");
+    }
+
+    // ---------- S-08 (reloj): el promedio mide cuándo se guardó el pick, no cuándo se tocó por última vez ----------
+
+    private DTO.Wrapped.SeasonWrappedDto BuildClock(Action<WrappedScenario> arrange)
+    {
+        var scenario = new WrappedScenario();
+        scenario.AddMember(1, "Jugador");
+        scenario.AddMember(2, "Rival");
+        arrange(scenario);
+        return _sut.Build(scenario.Build(targetMemberId: 1));
+    }
+
+    [Fact]
+    public void Build_S08_UsaLaCreacionDelPick_AunqueElPuntajeLoModifiqueDespuesDelPartido()
+    {
+        // Arrange: el pick se guardó 1 h antes del cierre, pero el cálculo de puntos lo tocó 10 h DESPUÉS del primer partido.
+        var result = BuildClock(s =>
+        {
+            for (var i = 0; i < 4; i++)
+            {
+                var match = s.AddMatch(1, "AME", "CHI", 1, 0);
+                s.Pick(1, match, "AME", hoursBeforeLock: -10, createdHoursBeforeLock: 1);
+                s.PickWinner(2, match);
+            }
+        });
+
+        // Assert: antes salía "0.0 h" para todos; debe reflejar la 1 h real.
+        var clock = result.Slides.Single(x => x.StoryId == "S-08");
+        clock.HighlightMetric.Should().StartWith("1");
+        clock.HighlightMetric.Should().NotStartWith("0");
+    }
+
+    [Fact]
+    public void Build_S08_IgnoraPicksGuardadosDespuesDelCierre_ComoLosImportados()
+    {
+        // Arrange: 3 picks guardados 1 h antes y 3 "guardados" 5 h después del primer partido (históricos importados).
+        var result = BuildClock(s =>
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                var match = s.AddMatch(1, "AME", "CHI", 1, 0);
+                s.Pick(1, match, "AME", createdHoursBeforeLock: 1);
+                s.PickWinner(2, match);
+            }
+
+            for (var i = 0; i < 3; i++)
+            {
+                var match = s.AddMatch(2, "AME", "CHI", 1, 0);
+                s.Pick(1, match, "AME", hoursBeforeLock: -5, createdHoursBeforeLock: -5);
+                s.PickWinner(2, match);
+            }
+        });
+
+        // Assert: promedio de 1 h con los 3 válidos; con el bug darían (3 x 1 + 3 x 0) / 6 = 0.5 h.
+        result.Slides.Single(x => x.StoryId == "S-08").HighlightMetric.Should().StartWith("1");
+    }
+
+    [Fact]
+    public void Build_S08_NoCuentaLosAutollenadosComoCeroHoras()
+    {
+        // Arrange: 3 picks manuales a 1 h y 3 autollenados (los pone el bot al cierre) en una sola jornada.
+        var result = BuildClock(s =>
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                var match = s.AddMatch(1, "AME", "CHI", 1, 0);
+                s.Pick(1, match, "AME", createdHoursBeforeLock: 1);
+                s.PickWinner(2, match);
+            }
+
+            for (var i = 0; i < 3; i++)
+            {
+                var match = s.AddMatch(2, "AME", "CHI", 1, 0);
+                s.Pick(1, match, "AME", autoFilled: true, hoursBeforeLock: 0, createdHoursBeforeLock: 0);
+                s.PickWinner(2, match);
+            }
+        });
+
+        result.Slides.Single(x => x.StoryId == "S-08").HighlightMetric.Should().StartWith("1");
+    }
+
+    [Fact]
+    public void Build_S08_ConMenosDeTresPicksValidos_NoMuestraLaLamina()
+    {
+        // Arrange: solo 2 picks guardados antes del cierre; el resto, después.
+        var result = BuildClock(s =>
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                var match = s.AddMatch(1, "AME", "CHI", 1, 0);
+                s.Pick(1, match, "AME", createdHoursBeforeLock: 24);
+                s.PickWinner(2, match);
+            }
+
+            for (var i = 0; i < 4; i++)
+            {
+                var match = s.AddMatch(2, "AME", "CHI", 1, 0);
+                s.Pick(1, match, "AME", hoursBeforeLock: -3, createdHoursBeforeLock: -3);
+                s.PickWinner(2, match);
+            }
+        });
+
+        result.Slides.Should().NotContain(x => x.StoryId == "S-08");
     }
 
     [Fact]
@@ -878,9 +983,11 @@ public class SeasonWrappedEngineTests
             bool humillacion = false,
             bool somnifero = false,
             bool empateFallido = false,
-            double hoursBeforeLock = 30)
+            double hoursBeforeLock = 30,
+            double? createdHoursBeforeLock = null)
         {
             var isHit = string.Equals(pickAbbr, match.WinnerAbbr, StringComparison.OrdinalIgnoreCase);
+            var firstGame = match.WeekFirstGameUtc!.Value;
 
             _picks.Add(new WrappedPickInfo(
                 memberId,
@@ -892,7 +999,8 @@ public class SeasonWrappedEngineTests
                 humillacion && !isHit,
                 somnifero && !isHit,
                 empateFallido && !isHit,
-                match.WeekFirstGameUtc!.Value.AddHours(-hoursBeforeLock)));
+                firstGame.AddHours(-hoursBeforeLock),
+                createdHoursBeforeLock.HasValue ? firstGame.AddHours(-createdHoursBeforeLock.Value) : null));
         }
 
         public void PickWinner(

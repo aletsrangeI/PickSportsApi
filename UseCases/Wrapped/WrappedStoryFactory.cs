@@ -594,6 +594,8 @@ internal static class WrappedStoryFactory
 
     // ---------------------------------------------------------------- S-08
 
+    private const int MinClockHabitSamples = 3;
+
     private static WrappedStory? BuildClockHabit(WrappedSeasonData data)
     {
         const string storyId = "S-08";
@@ -604,13 +606,7 @@ internal static class WrappedStoryFactory
 
         if (picks.Count == 0) return null;
 
-        var averageHours = picks.Average(p => Math.Clamp(
-            (data.MatchOf(p.MatchId).WeekFirstGameUtc!.Value - p.SubmittedUtc).TotalHours,
-            0d,
-            24d * 30d));
-
         var autofilledWeeks = data.AutofilledWeeks(member.MemberId);
-        var averageLabel = WrappedCopy.OneDecimal(averageHours);
 
         if (autofilledWeeks >= 2)
         {
@@ -633,6 +629,22 @@ internal static class WrappedStoryFactory
                 }),
                 $"{autofilledWeeks} jornadas auto"));
         }
+
+        // Solo cuentan los picks que el jugador guardó él mismo ANTES del cierre. Se descartan:
+        //  - los autollenados (los pone el bot justo al cierre),
+        //  - los que figuran guardados después del primer partido (históricos importados o sin fecha creíble).
+        // Contarlos como "0 horas" hacía que casi todos aparecieran como "Adicto a la adrenalina".
+        var submissions = picks
+            .Where(p => !p.IsAutoFilled)
+            .Select(p => (First: data.MatchOf(p.MatchId).WeekFirstGameUtc!.Value, Saved: p.CreatedUtc ?? p.SubmittedUtc))
+            .Where(x => x.Saved <= x.First)
+            .ToList();
+
+        // Con pocas muestras el promedio no es confiable: mejor no mostrar esta lámina.
+        if (submissions.Count < MinClockHabitSamples) return null;
+
+        var averageHours = submissions.Average(x => Math.Min((x.First - x.Saved).TotalHours, 24d * 30d));
+        var averageLabel = WrappedCopy.OneDecimal(averageHours);
 
         if (averageHours < 3d)
         {

@@ -309,7 +309,8 @@ public class WrappedApplication : IWrappedApplication
             p.IsHumillacion,
             p.IsSomnifero,
             p.IsEmpateFallido,
-            p.LastModified ?? p.Created)).ToList();
+            p.LastModified ?? p.Created,
+            p.Created)).ToList();
 
         var awardInfos = allAwards
             .Where(a => weeksById.ContainsKey(a.WeekId))

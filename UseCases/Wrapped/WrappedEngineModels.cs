@@ -39,7 +39,10 @@ public record WrappedPickInfo(
     bool IsHumillacion,
     bool IsSomnifero,
     bool IsEmpateFallido,
-    DateTime SubmittedUtc);
+    DateTime SubmittedUtc,
+    // Momento en que se guardó el pick por primera vez. SubmittedUtc es la última modificación, que el cálculo de
+    // puntos también actualiza DESPUÉS del partido; por eso no sirve para medir con cuánta anticipación se votó.
+    DateTime? CreatedUtc = null);
 
 public record WrappedAwardInfo(int MemberId, int WeekId, string AwardType);
 
