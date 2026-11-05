@@ -279,18 +279,77 @@ public class WebPushNotificationServiceTests
         var subRepo = new Mock<IPushSubscriptionRepository>();
         subRepo.Setup(r => r.GetActiveSubscriptionsByQuinielaAsync(10)).ReturnsAsync(new List<DbPushSubscription>
         {
-            new() { Id = 1, UserId = 2, Endpoint = "https://push.example.com/2", Active = true },
-            new() { Id = 2, UserId = 3, Endpoint = "https://push.example.com/3", Active = true }
+            // Llaves inválidas a propósito: si el filtro fallara y se intentara enviar, el envío falla al instante
+            // (sin tocar la red) y queda registrado con LogError, que es lo que se verifica abajo.
+            new() { Id = 1, UserId = 2, Endpoint = "https://push.example.com/2", P256dhKey = "!!", AuthKey = "!!", Active = true },
+            new() { Id = 2, UserId = 3, Endpoint = "https://push.example.com/3", P256dhKey = "!!", AuthKey = "!!", Active = true }
         });
         var service = CreateServiceWith(subRepo, ("Push:AllowedUserIds:0", "1"));
 
         // Act
         var result = await service.SendNotificationToQuinielaAsync(10, TestPayload);
 
-        // Assert: no se envía a nadie ni se toca ninguna suscripción.
+        // Assert: no se intentó enviar a nadie (ningún error de envío) ni se tocó ninguna suscripción.
         Assert.Equal(0, result);
+        _mockLogger.Verify(l => l.LogError(It.IsAny<string>(), It.IsAny<object[]>()), Times.Never);
         subRepo.Verify(r => r.UpdateAsync(It.IsAny<DbPushSubscription>()), Times.Never);
         subRepo.Verify(r => r.DeactivateEndpointAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendToQuiniela_PositiveControl_AttemptsSendOnlyForAllowedUsers()
+    {
+        // Arrange: usuarios 1 (permitido) y 2 (no). Las llaves inválidas hacen que el intento falle sin red.
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        subRepo.Setup(r => r.GetActiveSubscriptionsByQuinielaAsync(10)).ReturnsAsync(new List<DbPushSubscription>
+        {
+            new() { Id = 1, UserId = 1, Endpoint = "https://push.example.com/1", P256dhKey = "!!", AuthKey = "!!", Active = true },
+            new() { Id = 2, UserId = 2, Endpoint = "https://push.example.com/2", P256dhKey = "!!", AuthKey = "!!", Active = true }
+        });
+        var service = CreateServiceWith(subRepo, ("Push:AllowedUserIds:0", "1"));
+
+        // Act
+        var result = await service.SendNotificationToQuinielaAsync(10, TestPayload);
+
+        // Assert: exactamente un intento de envío (el del usuario 1); el del usuario 2 se filtró.
+        Assert.Equal(0, result);
+        _mockLogger.Verify(l => l.LogError(It.IsAny<string>(), It.IsAny<object[]>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("no")]
+    [InlineData("0")]
+    [InlineData("off")]
+    public async Task Send_WhenPushEnabledIsUnparseable_TurnsPushOffInsteadOfFailingOpen(string value)
+    {
+        // Arrange
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        var service = CreateServiceWith(subRepo, ("Push:Enabled", value));
+
+        // Act
+        var result = await service.SendNotificationToUserAsync(1, TestPayload);
+
+        // Assert
+        Assert.Equal(0, result);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("1;5")]
+    [InlineData("usuario1")]
+    [InlineData("[1]")]
+    public async Task Send_WhenAllowlistHasNoValidIds_SendsToNobodyInsteadOfEveryone(string value)
+    {
+        // Arrange: la clave está configurada pero no produce ningún id válido => falla cerrado.
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        var service = CreateServiceWith(subRepo, ("Push:AllowedUserIds", value));
+
+        // Act
+        var result = await service.SendNotificationToUserAsync(1, TestPayload);
+
+        // Assert
+        Assert.Equal(0, result);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]

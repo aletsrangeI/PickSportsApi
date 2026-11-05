@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Npgsql;
 
 namespace Persistence;
 
@@ -27,5 +28,24 @@ public static class ConnectionStringResolver
             configuration["ConnectionStrings:PickSports"],
             configuration["ConnectionStrings:picksports_db"]
         }.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+    }
+
+    /// <summary>
+    /// Nombre de la base a la que se conectaría la cadena. Npgsql usa el nombre de usuario como base cuando
+    /// no se indica <c>Database</c>, así que ese es el valor efectivo. False si la cadena no se puede interpretar.
+    /// </summary>
+    public static bool TryGetDatabaseName(string connectionString, out string? database)
+    {
+        try
+        {
+            var builder = new NpgsqlConnectionStringBuilder(connectionString);
+            database = !string.IsNullOrWhiteSpace(builder.Database) ? builder.Database : builder.Username;
+            return !string.IsNullOrWhiteSpace(database);
+        }
+        catch (Exception ex) when (ex is ArgumentException or FormatException)
+        {
+            database = null;
+            return false;
+        }
     }
 }
