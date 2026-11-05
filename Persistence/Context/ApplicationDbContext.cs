@@ -66,8 +66,8 @@ public class ApplicationDbContext : DbContext
 
     protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
     {
+        // El registro de datos sensibles se decide en AddPersistenceServices (Logging:EnableSensitiveDataLogging).
         optionsBuilder.AddInterceptors(_auditableEntitySaveChangesInterceptor);
-        optionsBuilder.EnableSensitiveDataLogging();
     }
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

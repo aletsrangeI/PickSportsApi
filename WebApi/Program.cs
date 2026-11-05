@@ -5,6 +5,8 @@ using UseCases;
 using WebApi.Modules.Authentication;
 using WebApi.Modules.Feature;
 using WebApi.Modules.Injection;
+using WebApi.Modules.Safety;
+using WebApi.Modules.Workers;
 
 AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
@@ -16,14 +18,16 @@ builder.Configuration
     .AddUserSecrets<Program>(true)
     .AddEnvironmentVariables();
 
+// SPEC-023: falla al arrancar, antes de registrar servicios, migrar o sembrar, si el entorno no es seguro.
+EnvironmentSafetyGuard.EnsureSafe(builder.Configuration, builder.Environment.EnvironmentName);
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddFeature(builder.Configuration);
 builder.Services.AddPersistenceServices(builder.Configuration);
 builder.Services.AddApplicationServices();
 builder.Services.AddInjection(builder.Configuration);
 builder.Services.AddAuthentication(builder.Configuration);
-builder.Services.AddHostedService<WebApi.BackgroundServices.EspnLiveScoreBackgroundWorker>();
-builder.Services.AddHostedService<WebApi.BackgroundServices.QuinielaReminderBackgroundWorker>();
+builder.Services.AddBackgroundWorkers(builder.Configuration);
 builder.Services.AddOpenApi(options =>
 {
     options.AddOperationTransformer((operation, context, cancellationToken) =>
@@ -51,7 +55,11 @@ builder.Services.AddOpenApi(options =>
 
 var app = builder.Build();
 
-app.UseDeveloperExceptionPage();
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+
 app.MapOpenApi();
 app.MapScalarApiReference(options =>
 {

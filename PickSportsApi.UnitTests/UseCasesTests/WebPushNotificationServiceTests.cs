@@ -182,4 +182,132 @@ public class WebPushNotificationServiceTests
         Assert.Equal("valid-p256dh", request.GetP256dh());
         Assert.Equal("valid-auth", request.GetAuth());
     }
+
+    // ---------- SPEC-023: Push:Enabled y Push:AllowedUserIds ----------
+
+    private static readonly PushNotificationPayload TestPayload = new("titulo", "mensaje");
+
+    private WebPushNotificationService CreateServiceWith(
+        Mock<IPushSubscriptionRepository> subRepo, params (string Key, string? Value)[] extra)
+    {
+        _mockUow.Setup(u => u.PushSubscriptions).Returns(subRepo.Object);
+
+        var settings = new Dictionary<string, string?>
+        {
+            { "Vapid:Subject", _vapidKeys.Subject },
+            { "Vapid:PublicKey", _vapidKeys.PublicKey },
+            { "Vapid:PrivateKey", _vapidKeys.PrivateKey }
+        };
+        foreach (var (key, value) in extra) settings[key] = value;
+
+        IConfiguration config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        return new WebPushNotificationService(_mockUow.Object, config, _mockLogger.Object);
+    }
+
+    [Fact]
+    public async Task Send_WhenPushDisabledByConfig_ReturnsZeroAndNeverQueriesSubscriptions()
+    {
+        // Arrange
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        var service = CreateServiceWith(subRepo, ("Push:Enabled", "false"));
+
+        // Act
+        var toUser = await service.SendNotificationToUserAsync(1, TestPayload);
+        var toUsers = await service.SendNotificationToUsersAsync(new[] { 1, 2 }, TestPayload);
+        var toQuiniela = await service.SendNotificationToQuinielaAsync(10, TestPayload);
+
+        // Assert
+        Assert.Equal(0, toUser);
+        Assert.Equal(0, toUsers);
+        Assert.Equal(0, toQuiniela);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(It.IsAny<int>()), Times.Never);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByQuinielaAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Send_WhenPushKeyAbsent_StillQueriesSubscriptions()
+    {
+        // Arrange: producción no define Push:*, debe comportarse como antes.
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        subRepo.Setup(r => r.GetActiveSubscriptionsByUserAsync(1))
+            .ReturnsAsync(new List<DbPushSubscription>());
+        var service = CreateServiceWith(subRepo);
+
+        // Act
+        var result = await service.SendNotificationToUserAsync(1, TestPayload);
+
+        // Assert
+        Assert.Equal(0, result);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(1), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendToUser_WhenUserNotInAllowlist_ReturnsZeroWithoutQueryingSubscriptions()
+    {
+        // Arrange
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        var service = CreateServiceWith(subRepo, ("Push:AllowedUserIds:0", "1"));
+
+        // Act
+        var result = await service.SendNotificationToUserAsync(2, TestPayload);
+
+        // Assert
+        Assert.Equal(0, result);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendToUser_WhenUserInAllowlist_QueriesSubscriptions()
+    {
+        // Arrange
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        subRepo.Setup(r => r.GetActiveSubscriptionsByUserAsync(1))
+            .ReturnsAsync(new List<DbPushSubscription>());
+        var service = CreateServiceWith(subRepo, ("Push:AllowedUserIds:0", "1"));
+
+        // Act
+        await service.SendNotificationToUserAsync(1, TestPayload);
+
+        // Assert
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(1), Times.Once);
+    }
+
+    [Fact]
+    public async Task SendToQuiniela_FiltersSubscriptionsOfUsersOutsideTheAllowlist()
+    {
+        // Arrange: la quiniela tiene suscripciones de los usuarios 2 y 3; solo el 1 está permitido.
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        subRepo.Setup(r => r.GetActiveSubscriptionsByQuinielaAsync(10)).ReturnsAsync(new List<DbPushSubscription>
+        {
+            new() { Id = 1, UserId = 2, Endpoint = "https://push.example.com/2", Active = true },
+            new() { Id = 2, UserId = 3, Endpoint = "https://push.example.com/3", Active = true }
+        });
+        var service = CreateServiceWith(subRepo, ("Push:AllowedUserIds:0", "1"));
+
+        // Act
+        var result = await service.SendNotificationToQuinielaAsync(10, TestPayload);
+
+        // Assert: no se envía a nadie ni se toca ninguna suscripción.
+        Assert.Equal(0, result);
+        subRepo.Verify(r => r.UpdateAsync(It.IsAny<DbPushSubscription>()), Times.Never);
+        subRepo.Verify(r => r.DeactivateEndpointAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendToUsers_InheritsTheAllowlist()
+    {
+        // Arrange
+        var subRepo = new Mock<IPushSubscriptionRepository>();
+        subRepo.Setup(r => r.GetActiveSubscriptionsByUserAsync(1)).ReturnsAsync(new List<DbPushSubscription>());
+        var service = CreateServiceWith(subRepo, ("Push:AllowedUserIds", "1,5"));
+
+        // Act
+        var result = await service.SendNotificationToUsersAsync(new[] { 1, 2, 3 }, TestPayload);
+
+        // Assert: solo se consulta al usuario 1 (la lista separada por comas también funciona).
+        Assert.Equal(0, result);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(1), Times.Once);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(2), Times.Never);
+        subRepo.Verify(r => r.GetActiveSubscriptionsByUserAsync(3), Times.Never);
+    }
 }

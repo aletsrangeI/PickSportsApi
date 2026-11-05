@@ -19,15 +19,18 @@ public class DependencyInjectionValidationTests
         // Arrange
         var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions());
 
+        // Llaves VAPID desechables, generadas en cada ejecución (no son las de producción).
+        var vapidKeys = WebPush.VapidHelper.GenerateVapidKeys();
+
         var inMemorySettings = new Dictionary<string, string?>
         {
             { "ConnectionStrings:PickSports", "Server=localhost;Port=5432;Database=test;User Id=test;Password=test;" },
-            { "Config:Secret", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" },
+            { "Config:Secret", "test-only-secret-not-for-production-0123456789abcdef0123456789abcdef" },
             { "Config:Issuer", "OrionSys" },
             { "Config:Audience", "OrionSys" },
             { "Vapid:Subject", "mailto:admin@picksports.orionsys.net" },
-            { "Vapid:PublicKey", "BPpp9qlf8_PFdC6WUBJmVnq8LBjA4opQDtJiZ7A0BwExzuPQHA1QL-sR9z8w-wXzit7NdOskfiDYJDBY1WVWYxk" },
-            { "Vapid:PrivateKey", "REDACTED_VAPID_PRIVATE_KEY_0000000000000000" }
+            { "Vapid:PublicKey", vapidKeys.PublicKey },
+            { "Vapid:PrivateKey", vapidKeys.PrivateKey }
         };
 
         builder.Configuration.AddInMemoryCollection(inMemorySettings);

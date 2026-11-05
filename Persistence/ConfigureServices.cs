@@ -14,26 +14,26 @@ public static class ConfigureServices
     public static IServiceCollection AddPersistenceServices(this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = new[]
-        {
-            Environment.GetEnvironmentVariable("ConnectionStrings__PickSports"),
-            Environment.GetEnvironmentVariable("ConnectionStrings__picksports_db"),
-            configuration.GetConnectionString("PickSports"),
-            configuration.GetConnectionString("picksports_db"),
-            configuration["ConnectionStrings:PickSports"],
-            configuration["ConnectionStrings:picksports_db"]
-        }.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s));
+        var connectionString = ConnectionStringResolver.Resolve(configuration);
+
+        // Los valores de parámetros SQL (que incluyen contraseñas y hashes) solo se registran si se pide
+        // explícitamente; el valor por defecto es false y solo Development lo activa.
+        var enableSensitiveDataLogging =
+            bool.TryParse(configuration["Logging:EnableSensitiveDataLogging"], out var sensitive) && sensitive;
 
         services.AddScoped<AuditableEntitySaveChangesInterceptor>();
         services.AddDbContext<ApplicationDbContext>(
             options =>
+            {
                 options.UseNpgsql(
                     connectionString,
                     builder =>
                         builder.MigrationsAssembly(
                             typeof(ApplicationDbContext).Assembly.FullName
                         )
-                )
+                );
+                options.EnableSensitiveDataLogging(enableSensitiveDataLogging);
+            }
         );
 
         // Repositorios
