@@ -47,6 +47,24 @@ public class ConnectionStringAndLoggingTests
         Assert.Null(ConnectionStringResolver.Resolve(config, _ => ""));
     }
 
+    [Theory]
+    [InlineData("Server=h;Database=picksports;User Id=u;Password=p;", "picksports")]
+    [InlineData("Server=h;Database=otra;User Id=picksports;Password=p;", "otra")]
+    [InlineData("Server=h;User Id=picksports;Password=p;", "picksports")] // sin Database: Npgsql usa el usuario
+    public void TryGetDatabaseName_ReturnsTheEffectiveDatabase(string connectionString, string expected)
+    {
+        Assert.True(ConnectionStringResolver.TryGetDatabaseName(connectionString, out var database));
+        Assert.Equal(expected, database);
+    }
+
+    [Theory]
+    [InlineData("esto no es una cadena de conexion")]
+    [InlineData("Server=h;Port=5432;")] // ni Database ni usuario
+    public void TryGetDatabaseName_ReturnsFalseWhenItCannotBeDetermined(string connectionString)
+    {
+        Assert.False(ConnectionStringResolver.TryGetDatabaseName(connectionString, out _));
+    }
+
     // ---------- EnableSensitiveDataLogging ----------
 
     private static bool? SensitiveLoggingEnabled(params (string Key, string? Value)[] values)

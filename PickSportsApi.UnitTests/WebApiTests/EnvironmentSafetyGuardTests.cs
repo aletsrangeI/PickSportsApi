@@ -92,6 +92,31 @@ public class EnvironmentSafetyGuardTests
         Assert.Empty(errors);
     }
 
+    [Fact]
+    public void Validate_ConnectionStringWithoutDatabase_UsesUserNameLikeNpgsql_ReturnsR3()
+    {
+        // Npgsql conecta a la base con el nombre del usuario cuando no hay "Database=".
+        var config = Config(
+            ("ConnectionStrings:PickSports", "Server=h;Port=5432;User Id=picksports;Password=p;"),
+            ("Config:Secret", Secret));
+
+        var errors = EnvironmentSafetyGuard.Validate(config, "Development", NoEnv);
+
+        Assert.Equal(new[] { DevOnProdDbMessage }, errors);
+    }
+
+    [Fact]
+    public void Validate_ConnectionStringWithoutDatabaseAndOtherUser_IsSafe()
+    {
+        var config = Config(
+            ("ConnectionStrings:PickSports", "Server=h;Port=5432;User Id=picksports_app;Password=p;"),
+            ("Config:Secret", Secret));
+
+        var errors = EnvironmentSafetyGuard.Validate(config, "Development", NoEnv);
+
+        Assert.Empty(errors);
+    }
+
     // ---------- R1 / R2: configuración obligatoria ----------
 
     [Fact]

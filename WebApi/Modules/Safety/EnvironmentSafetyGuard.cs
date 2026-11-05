@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Configuration;
-using Npgsql;
 using Persistence;
 
 namespace WebApi.Modules.Safety;
@@ -48,7 +47,7 @@ public static class EnvironmentSafetyGuard
                 productionDatabase = DefaultProductionDatabaseName;
             }
 
-            if (TryGetDatabaseName(connectionString, out var database)
+            if (ConnectionStringResolver.TryGetDatabaseName(connectionString, out var database)
                 && string.Equals(database, productionDatabase, StringComparison.OrdinalIgnoreCase))
             {
                 errors.Add($"EnvironmentSafety: un entorno no productivo no puede usar la base de producción '{productionDatabase}'.");
@@ -95,18 +94,4 @@ public static class EnvironmentSafetyGuard
 
     private static string MissingConfiguration(string key) =>
         $"EnvironmentSafety: falta la configuración obligatoria '{key}'.";
-
-    private static bool TryGetDatabaseName(string connectionString, out string? database)
-    {
-        try
-        {
-            database = new NpgsqlConnectionStringBuilder(connectionString).Database;
-            return !string.IsNullOrWhiteSpace(database);
-        }
-        catch (Exception ex) when (ex is ArgumentException or FormatException)
-        {
-            database = null;
-            return false;
-        }
-    }
 }

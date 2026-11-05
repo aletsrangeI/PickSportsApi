@@ -76,10 +76,26 @@ public class BackgroundWorkersExtensionsTests
         Assert.False(HasWorker<QuinielaReminderBackgroundWorker>(services));
     }
 
-    [Fact]
-    public void AddBackgroundWorkers_UnparseableValue_KeepsWorkerOn()
+    [Theory]
+    [InlineData("no")]
+    [InlineData("0")]
+    [InlineData("off")]
+    [InlineData("quizas")]
+    public void AddBackgroundWorkers_UnparseableValue_TurnsWorkerOffInsteadOfFailingOpen(string value)
     {
-        var services = Register((BackgroundWorkersExtensions.EspnLiveScoreKey, "quizas"));
+        // Un valor presente que no se puede interpretar nunca debe dejar un worker corriendo contra datos reales.
+        var services = Register((BackgroundWorkersExtensions.EspnLiveScoreKey, value));
+
+        Assert.False(HasWorker<EspnLiveScoreBackgroundWorker>(services));
+        Assert.True(HasWorker<QuinielaReminderBackgroundWorker>(services)); // la otra clave sigue ausente = encendida
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AddBackgroundWorkers_BlankValue_IsTreatedAsAbsent(string value)
+    {
+        var services = Register((BackgroundWorkersExtensions.EspnLiveScoreKey, value));
 
         Assert.True(HasWorker<EspnLiveScoreBackgroundWorker>(services));
     }

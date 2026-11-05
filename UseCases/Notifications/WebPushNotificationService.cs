@@ -20,8 +20,10 @@ public class WebPushNotificationService : IWebPushNotificationService
     private readonly string _privateKey;
     private readonly bool _isEnabled;
 
-    // SPEC-023: lista de usuarios permitidos para push (vacía = sin filtro, comportamiento de producción).
+    // SPEC-023: lista de usuarios permitidos para push. Sin la clave = sin filtro (producción). Si la clave está
+    // configurada pero no produce ningún id válido, no se envía a nadie (falla cerrado).
     private readonly HashSet<int> _allowedUserIds;
+    private readonly bool _allowlistConfigured;
 
     public WebPushNotificationService(
         IUnitOfWork unitOfWork,
@@ -36,12 +38,20 @@ public class WebPushNotificationService : IWebPushNotificationService
         _publicKey = _configuration["Vapid:PublicKey"] ?? string.Empty;
         _privateKey = _configuration["Vapid:PrivateKey"] ?? string.Empty;
 
-        // Clave ausente = encendido, para que producción se comporte igual que antes.
-        var pushEnabledByConfig = !bool.TryParse(_configuration["Push:Enabled"], out var pushEnabled) || pushEnabled;
+        // Clave ausente o vacía = encendido, para que producción se comporte igual que antes.
+        // Si la clave existe, solo un "true" explícito lo enciende: un valor no interpretable lo apaga.
+        var rawPushEnabled = _configuration["Push:Enabled"];
+        var pushEnabledByConfig = string.IsNullOrWhiteSpace(rawPushEnabled)
+            || (bool.TryParse(rawPushEnabled, out var pushEnabled) && pushEnabled);
         var hasVapidKeys = !string.IsNullOrWhiteSpace(_publicKey) && !string.IsNullOrWhiteSpace(_privateKey);
 
         _isEnabled = pushEnabledByConfig && hasVapidKeys;
-        _allowedUserIds = ReadAllowedUserIds(_configuration);
+        (_allowedUserIds, _allowlistConfigured) = ReadAllowedUserIds(_configuration);
+
+        if (_allowlistConfigured && _allowedUserIds.Count == 0)
+        {
+            _logger.LogWarning("[WebPush] Push:AllowedUserIds está configurada pero no contiene ningún id válido: no se enviará push a nadie.");
+        }
 
         if (!pushEnabledByConfig)
         {
@@ -53,30 +63,34 @@ public class WebPushNotificationService : IWebPushNotificationService
         }
     }
 
-    private static HashSet<int> ReadAllowedUserIds(IConfiguration configuration)
+    private static (HashSet<int> Ids, bool Configured) ReadAllowedUserIds(IConfiguration configuration)
     {
         var ids = new HashSet<int>();
+        var configured = false;
         var section = configuration.GetSection("Push:AllowedUserIds");
-        if (section is null) return ids;
+        if (section is null) return (ids, configured);
 
         // Admite el formato de arreglo (Push:AllowedUserIds:0=1) y una lista separada por comas.
         foreach (var child in section.GetChildren())
         {
+            if (string.IsNullOrWhiteSpace(child.Value)) continue;
+            configured = true;
             if (int.TryParse(child.Value, out var id)) ids.Add(id);
         }
 
         if (!string.IsNullOrWhiteSpace(section.Value))
         {
+            configured = true;
             foreach (var part in section.Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 if (int.TryParse(part, out var id)) ids.Add(id);
             }
         }
 
-        return ids;
+        return (ids, configured);
     }
 
-    private bool IsUserAllowed(int userId) => _allowedUserIds.Count == 0 || _allowedUserIds.Contains(userId);
+    private bool IsUserAllowed(int userId) => !_allowlistConfigured || _allowedUserIds.Contains(userId);
 
     public string GetVapidPublicKey() => _publicKey;
 

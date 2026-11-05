@@ -26,7 +26,12 @@ public static class BackgroundWorkersExtensions
         return services;
     }
 
-    // Ausente o no interpretable = encendido; solo un "false" explícito lo apaga.
-    private static bool IsEnabled(IConfiguration configuration, string key) =>
-        !bool.TryParse(configuration[key], out var enabled) || enabled;
+    // Ausente o vacío = encendido (producción no cambia). Si la clave existe, solo un "true" explícito lo enciende:
+    // un valor que no se pueda interpretar ("no", "0", "off") lo apaga en vez de dejar el worker corriendo.
+    private static bool IsEnabled(IConfiguration configuration, string key)
+    {
+        var raw = configuration[key];
+        if (string.IsNullOrWhiteSpace(raw)) return true;
+        return bool.TryParse(raw, out var enabled) && enabled;
+    }
 }
