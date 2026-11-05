@@ -1,4 +1,4 @@
-using DTO.Wrapped;
+﻿using DTO.Wrapped;
 
 namespace UseCases.Wrapped;
 
@@ -577,15 +577,15 @@ internal static class WrappedStoryFactory
                 storyId,
                 "CRYPTONITE",
                 2,
-                "El cambio de última hora",
+                "El pick de última hora",
                 $"Jornada {match.WeekNumber} · a menos de 1 hora",
                 WrappedCopy.Choose(data.Input.SeasonId, member.MemberId, storyId, new[]
                 {
-                    $"Editaste tu pick a menos de una hora del cierre y perdiste el punto. La prisa también juega en contra: {DisplayPick(lastMinute.PickAbbr, match)} no alcanzó.",
-                    $"Un cambio de último minuto te costó el acierto: {DisplayPick(lastMinute.PickAbbr, match)} no era el resultado. Lección aprendida.",
-                    $"A última hora cambiaste a {DisplayPick(lastMinute.PickAbbr, match)} y el marcador te cobró la osadía. La próxima, deja el pick tranquilo."
+                    $"Guardaste tu pick a menos de una hora del cierre y perdiste el punto. La prisa también juega en contra: {DisplayPick(lastMinute.PickAbbr, match)} no alcanzó.",
+                    $"Un pick de último minuto te costó el acierto: {DisplayPick(lastMinute.PickAbbr, match)} no era el resultado. Lección aprendida.",
+                    $"A última hora te decidiste por {DisplayPick(lastMinute.PickAbbr, match)} y el marcador te cobró la osadía. La próxima, piénsalo con tiempo."
                 }),
-                "Cambio de último minuto",
+                "Pick de último minuto",
                 match));
         }
 
@@ -1239,8 +1239,14 @@ internal static class WrappedStoryFactory
     {
         if (!match.WeekFirstGameUtc.HasValue) return false;
 
-        var hours = (match.WeekFirstGameUtc.Value - pick.SubmittedUtc).TotalHours;
-        // Cambio de ultima hora = enviado en la hora previa al primer partido (nunca despues del cierre).
+        // Los autollenados los crea el bot justo al cierre: no son una decision del jugador.
+        if (pick.IsAutoFilled) return false;
+
+        // Se usa la fecha en que se guardo el pick. SubmittedUtc es la ultima modificacion y el calculo de puntos
+        // la actualiza despues del partido, lo que volvia negativa la diferencia y descartaba todos los casos.
+        var saved = pick.CreatedUtc ?? pick.SubmittedUtc;
+        var hours = (match.WeekFirstGameUtc.Value - saved).TotalHours;
+        // Pick de ultima hora = guardado en la hora previa al primer partido (nunca despues del cierre).
         return hours is >= 0d and < 1d;
     }
 

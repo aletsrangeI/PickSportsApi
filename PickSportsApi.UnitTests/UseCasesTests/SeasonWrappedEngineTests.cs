@@ -753,6 +753,46 @@ public class SeasonWrappedEngineTests
         result.Slides.Should().NotContain(x => x.StoryId == "S-08");
     }
 
+    // ---------- S-06 nivel 2 (último minuto): se decide por cuándo se guardó el pick, no por su última modificación ----------
+
+    private DTO.Wrapped.SeasonWrappedDto BuildLastMinute(bool autoFilled)
+    {
+        var scenario = new WrappedScenario();
+        scenario.AddMember(1, "Jugador");
+        scenario.AddMember(2, "Rival");
+
+        // Tres picks fallados en equipos distintos: no hay equipo con 4 fallos (nivel 0) ni empates fallidos (nivel 1).
+        var m1 = scenario.AddMatch(1, "AME", "CHI", 2, 0);
+        var m2 = scenario.AddMatch(1, "GDL", "PUE", 1, 0);
+        var m3 = scenario.AddMatch(1, "MTY", "LEO", 1, 2);
+
+        // El primero se guardó 0.5 h antes del cierre; el cálculo de puntos lo modificó 10 h DESPUÉS del partido.
+        scenario.Pick(1, m1, "CHI", autoFilled: autoFilled, hoursBeforeLock: -10, createdHoursBeforeLock: 0.5);
+        scenario.Pick(1, m2, "PUE", hoursBeforeLock: -10, createdHoursBeforeLock: 30);
+        scenario.Pick(1, m3, "MTY", hoursBeforeLock: -10, createdHoursBeforeLock: 30);
+        foreach (var m in new[] { m1, m2, m3 }) scenario.PickWinner(2, m);
+
+        return _sut.Build(scenario.Build(targetMemberId: 1));
+    }
+
+    [Fact]
+    public void Build_S06_DetectaElPickDeUltimaHora_AunqueElPuntajeLoModifiqueDespuesDelPartido()
+    {
+        var result = BuildLastMinute(autoFilled: false);
+
+        var cryptonite = result.Slides.Single(x => x.StoryId == "S-06");
+        cryptonite.FallbackLevel.Should().Be(2);
+    }
+
+    [Fact]
+    public void Build_S06_NoTrataUnAutollenadoComoPickDeUltimaHora()
+    {
+        // El bot crea el pick justo al cierre: no es una decisión de último minuto del jugador.
+        var result = BuildLastMinute(autoFilled: true);
+
+        result.Slides.Should().NotContain(x => x.StoryId == "S-06" && x.FallbackLevel == 2);
+    }
+
     [Fact]
     public void Build_CuandoElObjetivoEsElLider_ReportaPosicionUnoDeN()
     {
