@@ -17,7 +17,14 @@ public class Quiniela : BaseAuditableEntity
     public decimal ThirdPlacePct { get; set; } = 10.00m;
     public bool IsActive { get; set; } = true;
 
+    /// <summary>Temporada a la que pertenece la quiniela (SPEC-020). Null = sin temporada asignada (Eventos Personalizados o liga sin temporadas).</summary>
+    public int? SeasonId { get; set; }
+
+    /// <summary>Fecha en que la quiniela se archivó al abrir la siguiente temporada (SPEC-020). Null = no archivada por temporada; con IsActive=false significa "oculta".</summary>
+    public DateTime? ArchivedAt { get; set; }
+
     public League? League { get; set; }
+    public Season? Season { get; set; }
     public User Owner { get; set; } = null!;
     public ICollection<QuinielaMember> Members { get; set; } = new List<QuinielaMember>();
     public ICollection<Pick> Picks { get; set; } = new List<Pick>();

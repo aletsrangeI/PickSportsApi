@@ -49,6 +49,7 @@ public class QuinielaApplicationTests
 
         _unitOfWorkMock.Setup(u => u.Users.GetAsync(1)).ReturnsAsync(user);
         _unitOfWorkMock.Setup(u => u.Leagues.GetAsync(10)).ReturnsAsync(league);
+        _unitOfWorkMock.Setup(u => u.Seasons.GetCurrentSeasonAsync(10)).ReturnsAsync((Season?)null);
         _unitOfWorkMock.Setup(u => u.Quinielas.GetByInviteCodeAsync(It.IsAny<string>()))
             .ReturnsAsync((Quiniela?)null);
 

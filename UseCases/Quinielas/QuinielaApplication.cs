@@ -7,6 +7,7 @@ using DTO.Quiniela;
 using Interface.Mapping;
 using Interface.Persistence;
 using Interface.UseCases;
+using UseCases.Scoring;
 using Validator.Quiniela;
 
 namespace UseCases.Quinielas;
@@ -54,6 +55,7 @@ public class QuinielaApplication : IQuinielaApplication
         bool isCustomEvents = string.Equals(request.QuinielaType, "CustomEvents", StringComparison.OrdinalIgnoreCase);
         string inviteCode;
         int? leagueId = null;
+        int? seasonId = null;
 
         if (isCustomEvents)
         {
@@ -77,6 +79,7 @@ public class QuinielaApplication : IQuinielaApplication
             }
 
             leagueId = league.Id;
+            seasonId = (await _unitOfWork.Seasons.GetCurrentSeasonAsync(league.Id))?.Id;
             inviteCode = await GenerateUniqueInviteCodeAsync(league.Code);
         }
 
@@ -86,6 +89,7 @@ public class QuinielaApplication : IQuinielaApplication
             Description = request.Description?.Trim(),
             QuinielaType = isCustomEvents ? QuinielaType.CustomEvents : QuinielaType.Sports,
             LeagueId = leagueId,
+            SeasonId = seasonId,
             OwnerId = userId,
             InviteCode = inviteCode,
             EntryFee = request.EntryFee,
@@ -137,6 +141,141 @@ public class QuinielaApplication : IQuinielaApplication
         return response;
     }
 
+    public async Task<Response<QuinielaResponseDto>> StartNextSeasonAsync(int quinielaId, int userId, StartNextSeasonDto request)
+    {
+        var response = new Response<QuinielaResponseDto>();
+        request ??= new StartNextSeasonDto();
+
+        Response<QuinielaResponseDto> Fail(string message)
+        {
+            response.isSuccess = false;
+            response.Message = message;
+            return response;
+        }
+
+        // 1. La quiniela debe existir
+        var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
+        if (quiniela == null) return Fail("La quiniela no existe.");
+
+        // 2. Eventos personalizados no tienen temporadas
+        if (quiniela.QuinielaType == QuinielaType.CustomEvents)
+            return Fail("Las quinielas de eventos personalizados no tienen temporadas.");
+
+        // 3. Permiso: OWNER/ADMIN de la quiniela o ADMIN del sistema
+        var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
+        var isOwnerOrAdmin = membership != null && (membership.Role == "OWNER" || membership.Role == "ADMIN");
+        if (!isOwnerOrAdmin)
+        {
+            var user = await _unitOfWork.Users.GetAsync(userId);
+            isOwnerOrAdmin = user != null && user.Role == "ADMIN";
+        }
+        if (!isOwnerOrAdmin) return Fail("Solo el Owner o un Admin puede abrir la nueva temporada.");
+
+        // 4. No archivada
+        if (!quiniela.IsActive) return Fail("Esta quiniela ya está archivada.");
+
+        // 5. Debe tener temporada asignada
+        if (quiniela.SeasonId == null || quiniela.LeagueId == null)
+            return Fail("La quiniela no tiene temporada asignada.");
+
+        // 6. Debe existir una temporada vigente distinta a la actual de la quiniela
+        var leagueId = quiniela.LeagueId.Value;
+        var next = await _unitOfWork.Seasons.GetCurrentSeasonAsync(leagueId);
+        if (next == null || next.Id == quiniela.SeasonId)
+            return Fail("Aún no existe la siguiente temporada de esta liga.");
+
+        // 7. No duplicar
+        var leagueQuinielas = await _unitOfWork.Quinielas.GetByLeagueIdAsync(leagueId);
+        if (leagueQuinielas.Any(q => q.SeasonId == next.Id && q.OwnerId == quiniela.OwnerId))
+            return Fail("Ya existe la quiniela de la siguiente temporada.");
+
+        var league = await _unitOfWork.Leagues.GetAsync(leagueId);
+        if (league == null) return Fail("La liga de la quiniela no existe.");
+
+        var members = (await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId))
+            .Where(m => m.Active)
+            .ToList();
+
+        var inviteCode = await GenerateUniqueInviteCodeAsync(league.Code);
+        var now = DateTime.UtcNow;
+
+        var newQuiniela = new Quiniela
+        {
+            Name = string.IsNullOrWhiteSpace(request.Name) ? quiniela.Name : request.Name.Trim(),
+            // La descripción no se copia: suele mencionar la temporada anterior.
+            Description = null,
+            QuinielaType = quiniela.QuinielaType,
+            LeagueId = quiniela.LeagueId,
+            OwnerId = quiniela.OwnerId,
+            InviteCode = inviteCode,
+            EntryFee = quiniela.EntryFee,
+            FirstPlacePct = quiniela.FirstPlacePct,
+            SecondPlacePct = quiniela.SecondPlacePct,
+            ThirdPlacePct = quiniela.ThirdPlacePct,
+            SeasonId = next.Id,
+            IsActive = true,
+            Active = true,
+            Created = now
+        };
+
+        await _unitOfWork.BeginTransactionAsync();
+        try
+        {
+            // 8. Crear la quiniela de la nueva temporada
+            if (!await _unitOfWork.Quinielas.InsertAsync(newQuiniela))
+                throw new InvalidOperationException("No se pudo crear la quiniela de la nueva temporada.");
+
+            // 9. Copiar miembros activos con acumulados en cero
+            foreach (var m in members)
+            {
+                var copied = await _unitOfWork.QuinielaMembers.InsertAsync(new QuinielaMember
+                {
+                    QuinielaId = newQuiniela.Id,
+                    UserId = m.UserId,
+                    Alias = m.Alias,
+                    Role = m.Role,
+                    PaidFee = false,
+                    TotalPoints = 0,
+                    TotalHits = 0,
+                    TotalUpsets = 0,
+                    TotalHumillaciones = 0,
+                    CurrentStreak = 0,
+                    BestStreak = 0,
+                    JoinedAt = now,
+                    Active = true,
+                    Created = now
+                });
+                if (!copied)
+                    throw new InvalidOperationException("No se pudo copiar a un miembro a la nueva temporada.");
+            }
+
+            // 10. Último paso: archivar la anterior
+            quiniela.IsActive = false;
+            quiniela.ArchivedAt = DateTime.UtcNow;
+            if (!await _unitOfWork.Quinielas.UpdateAsync(quiniela))
+                throw new InvalidOperationException("No se pudo archivar la quiniela anterior.");
+
+            await _unitOfWork.CommitTransactionAsync();
+        }
+        catch (Exception)
+        {
+            await _unitOfWork.RollbackTransactionAsync();
+            return Fail("Error al crear la nueva temporada. La quiniela anterior no fue modificada.");
+        }
+
+        // Recargar con liga, deporte y dueño para que la respuesta salga completa (sportName, ownerName).
+        var reloaded = await _unitOfWork.Quinielas.GetWithDetailsAsync(newQuiniela.Id);
+        var dto = _mapper.Map<QuinielaResponseDto>(reloaded ?? newQuiniela);
+        dto.UserRole = "OWNER";
+        dto.MembersCount = members.Count;
+        dto.SeasonName ??= next.Name;
+
+        response.isSuccess = true;
+        response.Message = "Nueva temporada creada exitosamente.";
+        response.Data = dto;
+        return response;
+    }
+
     public async Task<Response<IEnumerable<QuinielaResponseDto>>> GetUserQuinielasAsync(int userId)
     {
         var response = new Response<IEnumerable<QuinielaResponseDto>>();
@@ -145,6 +284,7 @@ public class QuinielaApplication : IQuinielaApplication
         var resultList = new List<QuinielaResponseDto>();
         foreach (var q in quinielas)
         {
+            await QuinielaSeasonResolver.EnsureSeasonAssignedAsync(_unitOfWork, q);
             var dto = _mapper.Map<QuinielaResponseDto>(q);
             var myMembership = q.Members.FirstOrDefault(m => m.UserId == userId && m.Active);
             dto.UserRole = myMembership?.Role ?? (q.OwnerId == userId ? "OWNER" : "MEMBER");
@@ -163,7 +303,17 @@ public class QuinielaApplication : IQuinielaApplication
         var response = new Response<QuinielaDetailDto>();
         var quiniela = await _unitOfWork.Quinielas.GetWithDetailsAsync(quinielaId);
 
-        if (quiniela == null || !quiniela.IsActive)
+        if (quiniela == null || !(quiniela.IsActive || quiniela.ArchivedAt != null))
+        {
+            response.isSuccess = false;
+            response.Message = "La quiniela no existe o está inactiva.";
+            return response;
+        }
+
+        var myMembership = quiniela.Members.FirstOrDefault(m => m.UserId == userId && m.Active);
+
+        // SPEC-020: el historial de una quiniela archivada solo lo lee quien participó (o su owner).
+        if (!quiniela.IsActive && myMembership == null && quiniela.OwnerId != userId)
         {
             response.isSuccess = false;
             response.Message = "La quiniela no existe o está inactiva.";
@@ -171,7 +321,6 @@ public class QuinielaApplication : IQuinielaApplication
         }
 
         var detailDto = _mapper.Map<QuinielaDetailDto>(quiniela);
-        var myMembership = quiniela.Members.FirstOrDefault(m => m.UserId == userId && m.Active);
         detailDto.UserRole = myMembership?.Role ?? (quiniela.OwnerId == userId ? "OWNER" : null);
         detailDto.CurrentUserMemberId = myMembership?.Id;
 

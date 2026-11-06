@@ -16,6 +16,10 @@ public class QuinielaResponseDto
     public decimal SecondPlacePct { get; set; }
     public decimal ThirdPlacePct { get; set; }
     public bool IsActive { get; set; }
+    public int? SeasonId { get; set; }
+    public string? SeasonName { get; set; }
+    /// <summary>True si la quiniela se archivó al abrir la siguiente temporada (histórica, solo lectura).</summary>
+    public bool IsArchived { get; set; }
     public int OwnerId { get; set; }
     public string OwnerName { get; set; } = null!;
     public string? UserRole { get; set; }

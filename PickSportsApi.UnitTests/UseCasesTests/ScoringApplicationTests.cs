@@ -109,6 +109,43 @@ public class ScoringApplicationTests
         Assert.Equal(shouldUpdateMembers ? 1 : 7, member.TotalHits);
     }
 
+    [Theory]
+    [InlineData(3, true)]   // Jornada de la temporada explícita de la quiniela: actualiza acumulados
+    [InlineData(2, false)]  // Jornada de otra temporada: no toca acumulados aunque sus picks recientes sean de esa temporada
+    public async Task ScoreWeekAsync_ConSeasonIdExplicito_SoloActualizaAcumuladosDeSuTemporada(int weekSeasonId, bool shouldUpdateMembers)
+    {
+        // Arrange: Quiniela.SeasonId = 3, pero el pick más reciente es de la temporada 2 (la heurística diría "2")
+        const int quinielaId = 10, leagueId = 5, adminUserId = 99;
+        var member = new QuinielaMember { Id = 1, UserId = 1, Alias = "Alex", TotalHits = 7 };
+        var week = new Week { Id = 3, SeasonId = weekSeasonId, WeekNumber = 10, Name = "Jornada 10", Status = "LOCKED" };
+        var match = new Domain.Entities.Match { Id = 1, WeekId = week.Id, Week = week, StatusState = "post", WinnerAbbr = "A", HomeScore = 1, AwayScore = 0, DateUtc = new DateTime(2026, 9, 20, 0, 0, 0, DateTimeKind.Utc) };
+        var pick = new Pick { MemberId = 1, MatchId = 1, Match = match, PickAbbr = "A" };
+        var otherWeek = new Week { Id = 4, SeasonId = 2, WeekNumber = 11 };
+        var latestPick = new Pick
+        {
+            MemberId = 1, MatchId = 2, PickAbbr = "B",
+            Match = new Domain.Entities.Match { Id = 2, WeekId = otherWeek.Id, Week = otherWeek, StatusState = "pre", DateUtc = new DateTime(2026, 10, 3, 0, 0, 0, DateTimeKind.Utc) }
+        };
+
+        var unitOfWork = new Mock<IUnitOfWork> { DefaultValue = DefaultValue.Mock };
+        unitOfWork.Setup(u => u.Quinielas.GetAsync(quinielaId)).ReturnsAsync(new Quiniela { Id = quinielaId, LeagueId = leagueId, SeasonId = 3 });
+        unitOfWork.Setup(u => u.QuinielaMembers.GetMembershipAsync(quinielaId, adminUserId)).ReturnsAsync(new QuinielaMember { Id = 50, Role = "ADMIN" });
+        unitOfWork.Setup(u => u.QuinielaMembers.GetMembersAsync(quinielaId)).ReturnsAsync(new List<QuinielaMember> { member });
+        unitOfWork.Setup(u => u.Weeks.GetAsync(week.Id)).ReturnsAsync(week);
+        unitOfWork.Setup(u => u.Matches.GetByWeekIdAsync(week.Id)).ReturnsAsync(new List<Domain.Entities.Match> { match });
+        unitOfWork.Setup(u => u.Picks.GetAllPicksForWeekAsync(quinielaId, week.Id)).ReturnsAsync(new List<Pick> { pick });
+        unitOfWork.Setup(u => u.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ReturnsAsync(new List<Pick> { pick, latestPick });
+        var application = new ScoringApplication(unitOfWork.Object, new ScoringEngine());
+
+        // Act
+        var result = await application.ScoreWeekAsync(quinielaId, week.Id, adminUserId);
+
+        // Assert
+        Assert.True(result.isSuccess);
+        unitOfWork.Verify(u => u.QuinielaMembers.UpdateAsync(It.IsAny<QuinielaMember>()), shouldUpdateMembers ? Times.Once() : Times.Never());
+        Assert.Equal(shouldUpdateMembers ? 1 : 7, member.TotalHits);
+    }
+
     [Fact]
     public async Task ScoreWeekAsync_JornadaDeLiguilla_NoSeCalifica()
     {

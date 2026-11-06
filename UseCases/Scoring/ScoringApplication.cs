@@ -166,10 +166,10 @@ public class ScoringApplication : IScoringApplication
         }
 
         // 6. Actualizar acumulados y rachas en QuinielaMember.
-        // Solo con jornadas de la temporada en juego de la quiniela (la de sus picks más recientes):
-        // recalificar una jornada histórica no debe sobrescribir los acumulados de la temporada en curso (H-009).
+        // Solo con jornadas de la temporada de la quiniela (Quiniela.SeasonId; si es null, la de sus picks más recientes):
+        // recalificar una jornada histórica no debe sobrescribir los acumulados de la temporada en curso (H-009, SPEC-020).
         var quinielaPicks = (await _unitOfWork.Picks.GetAllPicksForQuinielaAsync(quinielaId)).ToList();
-        bool isCurrentSeasonWeek = QuinielaSeasonResolver.AppliesToWeek(quinielaPicks, week);
+        bool isCurrentSeasonWeek = QuinielaSeasonResolver.AppliesToWeek(quiniela, quinielaPicks, week);
 
         allHistoricalPicks = quinielaPicks
             .Where(p => p.Match?.Week?.SeasonId == week.SeasonId)

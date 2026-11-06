@@ -28,6 +28,14 @@ public class QuinielaConfiguration : IEntityTypeConfiguration<Quiniela>
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Restrict);
 
+        builder.HasOne(q => q.Season)
+            .WithMany()
+            .HasForeignKey(q => q.SeasonId)
+            .IsRequired(false)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        builder.HasIndex(q => q.SeasonId);
+
         builder.HasOne(q => q.Owner)
             .WithMany(u => u.QuinielasOwned)
             .HasForeignKey(q => q.OwnerId)

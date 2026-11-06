@@ -58,7 +58,7 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         var totalNotificationsSent = 0;
 
         // 1. Obtener ligas y quinielas activas
-        var quinielas = (await _unitOfWork.Quinielas.GetAllAsync()).Where(q => q.IsActive).ToList();
+        var quinielas = (await _unitOfWork.Quinielas.GetAllAsync()).Where(q => q.IsActive && q.ArchivedAt == null).ToList();
         if (!quinielas.Any())
         {
             _logger.LogInformation("[QuinielaReminder] No hay quinielas activas para procesar.");
@@ -71,7 +71,10 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         foreach (var quiniela in quinielas)
         {
             // Obtener semanas asociadas a la liga de la quiniela
-            var leagueSeasons = seasons.Where(s => quiniela.LeagueId.HasValue && s.LeagueId == quiniela.LeagueId.Value).Select(s => s.Id).ToList();
+            // SPEC-020: con SeasonId solo se procesa esa temporada; con null, todas las de la liga (comportamiento anterior)
+            var leagueSeasons = quiniela.SeasonId.HasValue
+                ? new List<int> { quiniela.SeasonId.Value }
+                : seasons.Where(s => quiniela.LeagueId.HasValue && s.LeagueId == quiniela.LeagueId.Value).Select(s => s.Id).ToList();
             if (!leagueSeasons.Any()) continue;
 
             foreach (var seasonId in leagueSeasons)

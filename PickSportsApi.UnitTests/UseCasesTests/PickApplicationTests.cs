@@ -17,6 +17,8 @@ public class PickApplicationTests
     public PickApplicationTests()
     {
         _unitOfWorkMock = new Mock<IUnitOfWork>();
+        // SubmitPickAsync consulta la temporada vigente cuando la quiniela no tiene SeasonId (asignación perezosa, SPEC-020).
+        _unitOfWorkMock.SetupGet(u => u.Seasons).Returns(new Mock<ISeasonRepository>().Object);
         _submitValidator = new SubmitPickDtoValidator();
         _pickApplication = new PickApplication(_unitOfWorkMock.Object, _submitValidator);
     }
@@ -426,5 +428,157 @@ public class PickApplicationTests
         Assert.Equal("PUBLISHED", week.Status);
         _unitOfWorkMock.Verify(u => u.Weeks.Update(It.IsAny<Week>()), Times.Never);
         _unitOfWorkMock.Verify(u => u.Picks.InsertMissingAutoFilledPicksAsync(It.IsAny<IEnumerable<Pick>>()), Times.Never);
+    }
+
+    // ---- SPEC-020: una quiniela por temporada ----
+
+    private void ArrangeSubmit(Quiniela quiniela, Week week, MatchEntity match, QuinielaMember membership)
+    {
+        _unitOfWorkMock.Setup(u => u.QuinielaMembers.GetMembershipAsync(quiniela.Id, membership.UserId)).ReturnsAsync(membership);
+        _unitOfWorkMock.Setup(u => u.Quinielas.GetAsync(quiniela.Id)).ReturnsAsync(quiniela);
+        _unitOfWorkMock.Setup(u => u.Matches.GetAsync(match.Id)).ReturnsAsync(match);
+        _unitOfWorkMock.Setup(u => u.Weeks.GetAsync(week.Id)).ReturnsAsync(week);
+        var sport = new Sport { Id = 1, Name = "Fútbol", HasDraw = true };
+        _unitOfWorkMock.Setup(u => u.Leagues.GetAsync(1)).ReturnsAsync(new League { Id = 1, SportId = 1, Sport = sport, WeeksCount = 17 });
+        _unitOfWorkMock.Setup(u => u.Sports.GetAsync(1)).ReturnsAsync(sport);
+        _unitOfWorkMock.Setup(u => u.Picks.GetPickAsync(quiniela.Id, membership.Id, match.Id)).ReturnsAsync((Pick?)null);
+        _unitOfWorkMock.Setup(u => u.Picks.InsertAsync(It.IsAny<Pick>())).ReturnsAsync(true);
+        _unitOfWorkMock.Setup(u => u.PickAuditLogs.InsertAsync(It.IsAny<PickAuditLog>())).ReturnsAsync(true);
+    }
+
+    private static (Quiniela quiniela, Week week, MatchEntity match, QuinielaMember membership) BuildSubmitScenario(int? quinielaSeasonId, int weekSeasonId, DateTime? archivedAt = null)
+    {
+        var quiniela = new Quiniela { Id = 1, LeagueId = 1, Active = true, SeasonId = quinielaSeasonId, ArchivedAt = archivedAt };
+        var week = new Week { Id = 5, SeasonId = weekSeasonId, WeekNumber = 3, Status = "PUBLISHED", FirstGameUtc = DateTime.UtcNow.AddHours(2) };
+        var match = new MatchEntity
+        {
+            Id = 100, WeekId = 5, DateUtc = DateTime.UtcNow.AddHours(2), StatusState = "pre",
+            HomeTeam = new Team { Id = 1, Abbreviation = "AME" }, AwayTeam = new Team { Id = 2, Abbreviation = "GDL" }
+        };
+        var membership = new QuinielaMember { Id = 42, QuinielaId = 1, UserId = 10, Alias = "ElCrack", Role = "MEMBER" };
+        return (quiniela, week, match, membership);
+    }
+
+    [Fact]
+    public async Task SubmitPickAsync_PartidoDeOtraTemporada_RechazaConMensajeExacto()
+    {
+        // Arrange: la quiniela es de la temporada 3 y el partido pertenece a la temporada 2
+        var (quiniela, week, match, membership) = BuildSubmitScenario(quinielaSeasonId: 3, weekSeasonId: 2);
+        ArrangeSubmit(quiniela, week, match, membership);
+
+        // Act
+        var result = await _pickApplication.SubmitPickAsync(1, 10, new SubmitPickRequestDto { MatchId = 100, PickAbbr = "AME" });
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Equal("El partido no pertenece a la temporada de esta quiniela.", result.Message);
+        _unitOfWorkMock.Verify(u => u.Picks.InsertAsync(It.IsAny<Pick>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SubmitPickAsync_PartidoDeLaTemporadaDeLaQuiniela_Acepta()
+    {
+        // Arrange
+        var (quiniela, week, match, membership) = BuildSubmitScenario(quinielaSeasonId: 3, weekSeasonId: 3);
+        ArrangeSubmit(quiniela, week, match, membership);
+
+        // Act
+        var result = await _pickApplication.SubmitPickAsync(1, 10, new SubmitPickRequestDto { MatchId = 100, PickAbbr = "AME" });
+
+        // Assert
+        Assert.True(result.isSuccess);
+        _unitOfWorkMock.Verify(u => u.Picks.InsertAsync(It.Is<Pick>(p => p.PickAbbr == "AME")), Times.Once);
+    }
+
+    [Fact]
+    public async Task SubmitPickAsync_QuinielaArchivada_RechazaConMensajeExacto()
+    {
+        // Arrange: archivada, aunque la temporada coincida
+        var (quiniela, week, match, membership) = BuildSubmitScenario(quinielaSeasonId: 3, weekSeasonId: 3, archivedAt: DateTime.UtcNow.AddDays(-1));
+        ArrangeSubmit(quiniela, week, match, membership);
+
+        // Act
+        var result = await _pickApplication.SubmitPickAsync(1, 10, new SubmitPickRequestDto { MatchId = 100, PickAbbr = "AME" });
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Equal("La quiniela está archivada y es de solo lectura.", result.Message);
+        _unitOfWorkMock.Verify(u => u.Picks.InsertAsync(It.IsAny<Pick>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SubmitPickAsync_QuinielaArchivadaYDeOtraTemporada_PriorizaMensajeDeArchivada()
+    {
+        // Arrange
+        var (quiniela, week, match, membership) = BuildSubmitScenario(quinielaSeasonId: 3, weekSeasonId: 2, archivedAt: DateTime.UtcNow);
+        ArrangeSubmit(quiniela, week, match, membership);
+
+        // Act
+        var result = await _pickApplication.SubmitPickAsync(1, 10, new SubmitPickRequestDto { MatchId = 100, PickAbbr = "AME" });
+
+        // Assert
+        Assert.Equal("La quiniela está archivada y es de solo lectura.", result.Message);
+    }
+
+    [Fact]
+    public async Task SubmitPickAsync_QuinielaSinSeasonId_AceptaCualquierTemporadaComoAntes()
+    {
+        // Arrange: SeasonId null conserva el comportamiento previo, sin importar la temporada de la jornada
+        var (quiniela, week, match, membership) = BuildSubmitScenario(quinielaSeasonId: null, weekSeasonId: 99);
+        ArrangeSubmit(quiniela, week, match, membership);
+
+        // Act
+        var result = await _pickApplication.SubmitPickAsync(1, 10, new SubmitPickRequestDto { MatchId = 100, PickAbbr = "GDL" });
+
+        // Assert
+        Assert.True(result.isSuccess);
+        _unitOfWorkMock.Verify(u => u.Picks.InsertAsync(It.Is<Pick>(p => p.PickAbbr == "GDL")), Times.Once);
+    }
+
+    private void ArrangeAutofillAdmin(Quiniela quiniela, Week week)
+    {
+        _unitOfWorkMock.Setup(u => u.QuinielaMembers.GetMembershipAsync(quiniela.Id, 99))
+            .ReturnsAsync(new QuinielaMember { Id = 1, QuinielaId = quiniela.Id, UserId = 99, Role = "OWNER" });
+        _unitOfWorkMock.Setup(u => u.Users.GetAsync(99)).ReturnsAsync(new User { Id = 99, Role = "USER" });
+        _unitOfWorkMock.Setup(u => u.Quinielas.GetAsync(quiniela.Id)).ReturnsAsync(quiniela);
+        _unitOfWorkMock.Setup(u => u.Weeks.GetAsync(week.Id)).ReturnsAsync(week);
+        _unitOfWorkMock.Setup(u => u.Leagues.GetAsync(1)).ReturnsAsync(new League { Id = 1, WeeksCount = 17 });
+    }
+
+    [Fact]
+    public async Task LockAndAutofillAsync_JornadaDeOtraTemporada_RechazaYNoBloquea()
+    {
+        // Arrange
+        var quiniela = new Quiniela { Id = 1, LeagueId = 1, Active = true, SeasonId = 3 };
+        var week = new Week { Id = 7, SeasonId = 2, WeekNumber = 5, Status = "PUBLISHED" };
+        ArrangeAutofillAdmin(quiniela, week);
+
+        // Act
+        var result = await _pickApplication.LockAndAutofillAsync(1, 7, 99);
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Equal("La jornada no pertenece a la temporada de esta quiniela.", result.Message);
+        Assert.Equal("PUBLISHED", week.Status);
+        _unitOfWorkMock.Verify(u => u.Weeks.Update(It.IsAny<Week>()), Times.Never);
+        _unitOfWorkMock.Verify(u => u.Picks.InsertMissingAutoFilledPicksAsync(It.IsAny<IEnumerable<Pick>>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task LockAndAutofillAsync_QuinielaArchivada_RechazaYNoBloquea()
+    {
+        // Arrange
+        var quiniela = new Quiniela { Id = 1, LeagueId = 1, Active = true, SeasonId = 3, ArchivedAt = DateTime.UtcNow };
+        var week = new Week { Id = 7, SeasonId = 3, WeekNumber = 5, Status = "PUBLISHED" };
+        ArrangeAutofillAdmin(quiniela, week);
+
+        // Act
+        var result = await _pickApplication.LockAndAutofillAsync(1, 7, 99);
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Equal("La quiniela está archivada y es de solo lectura.", result.Message);
+        Assert.Equal("PUBLISHED", week.Status);
+        _unitOfWorkMock.Verify(u => u.Weeks.Update(It.IsAny<Week>()), Times.Never);
     }
 }

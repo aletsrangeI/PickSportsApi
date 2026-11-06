@@ -151,6 +151,59 @@ public class LiguillaApplicationTests
     }
 
     [Fact]
+    public async Task SubmitBracket_ConSeasonIdExplicito_UsaLosNodosDeEsaTemporadaYNoLaVigente()
+    {
+        // Arrange: la quiniela es de la temporada 15 (archivada); la vigente de la liga es la 20
+        const int quinielaSeasonId = 15;
+        var quiniela = new Quiniela { Id = QuinielaId, LeagueId = LeagueId, SeasonId = quinielaSeasonId };
+        var expiredNode = new LiguillaNode { SeasonId = quinielaSeasonId, NodeNumber = 1, KickoffUtc = DateTime.UtcNow.AddMinutes(-5) };
+        var openNodeOfCurrent = new LiguillaNode { SeasonId = SeasonId, NodeNumber = 1, KickoffUtc = DateTime.UtcNow.AddDays(1) };
+
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Seasons.GetCurrentSeasonAsync(LeagueId))
+            .ReturnsAsync(new Season { Id = SeasonId, LeagueId = LeagueId, IsCurrent = true });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(quinielaSeasonId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaNode> { expiredNode });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaNode> { openNodeOfCurrent });
+
+        var dto = new SubmitLiguillaBracketDto
+        {
+            QfWinner1TeamId = 1, QfWinner2TeamId = 2, QfWinner3TeamId = 3, QfWinner4TeamId = 4,
+            SfWinner1TeamId = 1, SfWinner2TeamId = 2, ChampionTeamId = 1
+        };
+
+        // Act
+        var act = () => _sut.SubmitBracketAsync(QuinielaId, UserId, dto);
+
+        // Assert: expira porque usó la temporada 15, no la vigente (que habría aceptado)
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*tiempo límite*ha expirado*");
+        _mockUow.Verify(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetStandings_ConSeasonIdExplicito_UsaNombreYNodosDeLaTemporadaDeLaQuiniela()
+    {
+        // Arrange
+        const int quinielaSeasonId = 15;
+        var quiniela = new Quiniela { Id = QuinielaId, LeagueId = LeagueId, SeasonId = quinielaSeasonId };
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Seasons.GetAsync(quinielaSeasonId)).ReturnsAsync(new Season { Id = quinielaSeasonId, Name = "Clausura 2026" });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(quinielaSeasonId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaNode>());
+        _mockUow.Setup(u => u.Liguilla.GetAllBracketsForQuinielaAsync(QuinielaId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaBracket>());
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembersAsync(QuinielaId)).ReturnsAsync(new List<QuinielaMember>());
+
+        // Act
+        var result = await _sut.GetStandingsAsync(QuinielaId);
+
+        // Assert
+        result.SeasonName.Should().Be("Clausura 2026");
+        _mockUow.Verify(u => u.Seasons.GetCurrentSeasonAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SubmitBracket_WhenValid_PersistsAndReturnsDetail()
     {
         // Arrange

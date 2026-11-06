@@ -251,13 +251,13 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
     /// </summary>
     private async Task<List<Quiniela>> GetQuinielasForWeekAsync(Week week, Season season, IUnitOfWork unitOfWork)
     {
-        var leagueQuinielas = (await unitOfWork.Quinielas.GetByLeagueIdAsync(season.LeagueId)).Where(q => q.IsActive).ToList();
+        var leagueQuinielas = (await unitOfWork.Quinielas.GetByLeagueIdAsync(season.LeagueId)).Where(q => q.IsActive && q.ArchivedAt == null).ToList();
         var result = new List<Quiniela>();
 
         foreach (var quiniela in leagueQuinielas)
         {
             var quinielaPicks = await unitOfWork.Picks.GetAllPicksForQuinielaAsync(quiniela.Id);
-            if (QuinielaSeasonResolver.AppliesToWeek(quinielaPicks, week))
+            if (QuinielaSeasonResolver.AppliesToWeek(quiniela, quinielaPicks, week))
             {
                 result.Add(quiniela);
             }
@@ -364,7 +364,8 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         IWebPushNotificationService webPush,
         CancellationToken ct)
     {
-        var quinielas = (await unitOfWork.Quinielas.GetByLeagueIdAsync(season.LeagueId)).Where(q => q.IsActive).ToList();
+        // SPEC-020: solo las quinielas a las que aplica la jornada (misma temporada, no archivadas)
+        var quinielas = await GetQuinielasForWeekAsync(week, season, unitOfWork);
         var todayLocalStr = DateTime.UtcNow.AddHours(-6).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
 
         foreach (var match in finishedMatches)

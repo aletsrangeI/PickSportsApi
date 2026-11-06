@@ -76,6 +76,91 @@ public class QuinielaReminderApplicationTests
     }
 
     [Fact]
+    public async Task ProcessDailyReminders_QuinielaConSeasonId_SoloNotificaJornadasDeSuTemporada()
+    {
+        // ARRANGE (SPEC-020): Lunes 13:00 CST. La liga tiene dos temporadas activas, la quiniela juega la 5.
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+
+        var quiniela = new Quiniela { Id = 1, LeagueId = 10, Name = "Quiniela Apertura", SeasonId = 5 };
+        var seasonOwn = new Season { Id = 5, LeagueId = 10, Active = true };
+        var seasonOther = new Season { Id = 6, LeagueId = 10, Active = true };
+        var weekOwn = new Week { Id = 100, SeasonId = 5, WeekNumber = 8, Status = "PUBLISHED", Active = true };
+        var weekOther = new Week { Id = 200, SeasonId = 6, WeekNumber = 3, Status = "PUBLISHED", Active = true };
+
+        _mockQuinielas.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { seasonOwn, seasonOther });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(new List<Week> { weekOwn });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(6)).ReturnsAsync(new List<Week> { weekOther });
+        _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT: avisa la Jornada 8 de su temporada y nunca la Jornada 3 de la otra
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log =>
+            log.NotificationType == "WEEK_OPENED" && log.WeekId == 100 && log.QuinielaId == 1)), Times.Once);
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.WeekId == 200)), Times.Never);
+        _mockWeeks.Verify(w => w.GetBySeasonIdAsync(6), Times.Never);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            1, It.Is<PushNotificationPayload>(p => p.Message.Contains("Jornada 3")), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_QuinielaSinSeasonId_ConservaTodasLasTemporadasDeLaLiga()
+    {
+        // ARRANGE: SeasonId null = comportamiento anterior (todas las temporadas activas de la liga)
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+
+        var quiniela = new Quiniela { Id = 1, LeagueId = 10, Name = "Quiniela Legada" };
+        var seasonA = new Season { Id = 5, LeagueId = 10, Active = true };
+        var seasonB = new Season { Id = 6, LeagueId = 10, Active = true };
+
+        _mockQuinielas.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { seasonA, seasonB });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(new List<Week> { new() { Id = 100, SeasonId = 5, WeekNumber = 8, Status = "PUBLISHED", Active = true } });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(6)).ReturnsAsync(new List<Week> { new() { Id = 200, SeasonId = 6, WeekNumber = 3, Status = "PUBLISHED", Active = true } });
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT
+        _mockWeeks.Verify(w => w.GetBySeasonIdAsync(5), Times.AtLeastOnce);
+        _mockWeeks.Verify(w => w.GetBySeasonIdAsync(6), Times.AtLeastOnce);
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.WeekId == 100)), Times.Once);
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.WeekId == 200)), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_QuinielaArchivada_NoEnviaRecordatorios()
+    {
+        // ARRANGE: quiniela archivada (SPEC-020) aunque siga marcada IsActive y tenga jornada publicada
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+
+        var archived = new Quiniela { Id = 1, LeagueId = 10, Name = "Apertura archivada", SeasonId = 5, ArchivedAt = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc) };
+        var season = new Season { Id = 5, LeagueId = 10, Active = true };
+        var week = new Week { Id = 100, SeasonId = 5, WeekNumber = 8, Status = "PUBLISHED", Active = true };
+
+        _mockQuinielas.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<Quiniela> { archived });
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(new List<Week> { week });
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        var count = await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT
+        Assert.Equal(0, count);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(It.IsAny<int>(), It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockLogs.Verify(l => l.InsertAsync(It.IsAny<PushNotificationLog>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ProcessDailyReminders_OnTuesdayAfter11AM_ShouldSendReminderOnlyToMembersWithIncompletePicks()
     {
         // ARRANGE: Martes a las 11:30 hora de México (CST = UTC-6 -> 17:30 UTC)

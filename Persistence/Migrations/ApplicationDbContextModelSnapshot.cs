@@ -1129,6 +1129,9 @@ namespace Persistence.Migrations
                     b.Property<bool>("Active")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTime?>("ArchivedAt")
+                        .HasColumnType("timestamp without time zone");
+
                     b.Property<DateTime>("Created")
                         .HasColumnType("timestamp without time zone");
 
@@ -1183,6 +1186,9 @@ namespace Persistence.Migrations
                         .HasColumnType("integer")
                         .HasDefaultValue(1);
 
+                    b.Property<int?>("SeasonId")
+                        .HasColumnType("integer");
+
                     b.Property<decimal>("SecondPlacePct")
                         .ValueGeneratedOnAdd()
                         .HasPrecision(5, 2)
@@ -1203,6 +1209,8 @@ namespace Persistence.Migrations
                     b.HasIndex("LeagueId");
 
                     b.HasIndex("OwnerId");
+
+                    b.HasIndex("SeasonId");
 
                     b.ToTable("Quinielas", (string)null);
                 });
@@ -2384,9 +2392,16 @@ namespace Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("Domain.Entities.Season", "Season")
+                        .WithMany()
+                        .HasForeignKey("SeasonId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.Navigation("League");
 
                     b.Navigation("Owner");
+
+                    b.Navigation("Season");
                 });
 
             modelBuilder.Entity("Domain.Entities.QuinielaChallenge", b =>

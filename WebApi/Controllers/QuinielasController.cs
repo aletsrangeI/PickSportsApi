@@ -73,6 +73,21 @@ public class QuinielasController : ControllerBase
         return Ok(response);
     }
 
+    [HttpPost("{id}/next-season")]
+    public async Task<IActionResult> StartNextSeason(int id, [FromBody] StartNextSeasonDto? request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId <= 0) return Unauthorized();
+
+        var response = await _quinielaApplication.StartNextSeasonAsync(id, userId, request ?? new StartNextSeasonDto());
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
+
     [HttpPost("join")]
     public async Task<IActionResult> Join([FromBody] JoinQuinielaDto request)
     {

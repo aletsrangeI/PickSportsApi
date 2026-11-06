@@ -2,6 +2,7 @@ using Domain.Entities;
 using DTO.Liguilla;
 using Interface.Persistence;
 using Interface.UseCases;
+using UseCases.Scoring;
 
 namespace UseCases.Liguilla;
 
@@ -26,20 +27,20 @@ public class LiguillaApplication : ILiguillaApplication
             return new LiguillaOverviewDto { IsAvailable = false, Status = "HIDDEN" };
         }
 
-        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value);
-        if (currentSeason == null)
+        var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
+        if (seasonId == null)
         {
             return new LiguillaOverviewDto { IsAvailable = false, Status = "HIDDEN" };
         }
 
         // 1. Verificación de Stealth Gating:
         // Todas las jornadas regulares (<= 17) deben estar SCORED
-        var weeks = await _unitOfWork.Weeks.GetBySeasonIdAsync(currentSeason.Id);
+        var weeks = await _unitOfWork.Weeks.GetBySeasonIdAsync(seasonId.Value);
         var regularWeeks = weeks.Where(w => w.WeekNumber <= 17).ToList();
         bool isRegularSeasonFinished = regularWeeks.Count > 0 && regularWeeks.All(w => string.Equals(w.Status, "SCORED", StringComparison.OrdinalIgnoreCase));
 
         // Obtener los nodos oficiales de Liguilla
-        var nodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(currentSeason.Id, ct);
+        var nodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct);
         var qfNodes = nodes.Where(n => n.NodeNumber >= 1 && n.NodeNumber <= 4).ToList();
         bool isPlayInFinished = qfNodes.Count == 4 && qfNodes.All(n => n.TeamAId.HasValue && n.TeamBId.HasValue);
 
@@ -127,8 +128,8 @@ public class LiguillaApplication : ILiguillaApplication
         }
 
         var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
-        var currentSeason = (quiniela != null && quiniela.LeagueId.HasValue) ? await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value) : null;
-        var nodes = currentSeason != null ? await _unitOfWork.Liguilla.GetNodesBySeasonAsync(currentSeason.Id, ct) : new List<LiguillaNode>();
+        var seasonId = quiniela != null ? await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela) : null;
+        var nodes = seasonId.HasValue ? await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct) : new List<LiguillaNode>();
 
         var user = await _unitOfWork.Users.GetAsync(userId);
         var member = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
@@ -145,11 +146,11 @@ public class LiguillaApplication : ILiguillaApplication
         if (!quiniela.LeagueId.HasValue)
             throw new InvalidOperationException("La quiniela no tiene una liga asignada.");
 
-        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value);
-        if (currentSeason == null)
+        var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
+        if (seasonId == null)
             throw new InvalidOperationException("No hay una temporada vigente configurada.");
 
-        var nodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(currentSeason.Id, ct);
+        var nodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct);
         var qfNodes = nodes.Where(n => n.NodeNumber >= 1 && n.NodeNumber <= 4).ToList();
 
         // 1. Validar fecha límite de bloqueo (Kickoff del primer partido de cuartos)
@@ -238,8 +239,9 @@ public class LiguillaApplication : ILiguillaApplication
         if (quiniela == null)
             throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
 
-        var currentSeason = quiniela.LeagueId.HasValue ? await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value) : null;
-        var nodes = currentSeason != null ? await _unitOfWork.Liguilla.GetNodesBySeasonAsync(currentSeason.Id, ct) : new List<LiguillaNode>();
+        var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
+        var currentSeason = seasonId.HasValue ? await _unitOfWork.Seasons.GetAsync(seasonId.Value) : null;
+        var nodes = seasonId.HasValue ? await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct) : new List<LiguillaNode>();
 
         var brackets = await _unitOfWork.Liguilla.GetAllBracketsForQuinielaAsync(quinielaId, ct);
         var members = await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId);
@@ -450,8 +452,8 @@ public class LiguillaApplication : ILiguillaApplication
         if (!quiniela.LeagueId.HasValue)
             throw new InvalidOperationException("La quiniela no tiene una liga asignada.");
 
-        var currentSeason = await _unitOfWork.Seasons.GetCurrentSeasonAsync(quiniela.LeagueId.Value);
-        if (currentSeason == null)
+        var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
+        if (seasonId == null)
             throw new InvalidOperationException("No se encontró una temporada activa para esta liga.");
 
         // Obtener equipos de la liga ordenados por puntos o por ESPN Standings
@@ -488,7 +490,7 @@ public class LiguillaApplication : ILiguillaApplication
         // Equipos con sus siembras:
         // 1: top8Teams[0], 2: top8Teams[1], 3: top8Teams[2], 4: top8Teams[3]
         // 5: top8Teams[4], 6: top8Teams[5], 7: top8Teams[6], 8: top8Teams[7]
-        var existingNodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(currentSeason.Id, ct);
+        var existingNodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct);
         var kickoffSimulation = DateTime.UtcNow.AddDays(7); // Tiempo suficiente para pronosticar
 
         // Cuartos de Final (Reglamento FMF):
@@ -511,7 +513,7 @@ public class LiguillaApplication : ILiguillaApplication
             {
                 node = new LiguillaNode
                 {
-                    SeasonId = currentSeason.Id,
+                    SeasonId = seasonId.Value,
                     Round = "QF",
                     NodeNumber = nodeNumber,
                     TeamAId = teamA.Id,
@@ -552,7 +554,7 @@ public class LiguillaApplication : ILiguillaApplication
             {
                 node = new LiguillaNode
                 {
-                    SeasonId = currentSeason.Id,
+                    SeasonId = seasonId.Value,
                     Round = round,
                     NodeNumber = nodeNumber,
                     TeamAId = null,

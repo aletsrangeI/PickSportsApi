@@ -23,8 +23,9 @@ public class QuinielaRepository : GenericRepository<Quiniela>, IQuinielaReposito
         return await _dbSet.AsNoTracking()
             .Include(q => q.League)
                 .ThenInclude(l => l!.Sport)
+            .Include(q => q.Season)
             .Include(q => q.Members)
-            .Where(q => q.IsActive && q.Members.Any(m => m.UserId == userId && m.Active))
+            .Where(q => (q.IsActive || q.ArchivedAt != null) && q.Members.Any(m => m.UserId == userId && m.Active))
             .OrderByDescending(q => q.Created)
             .ToListAsync();
     }
@@ -35,6 +36,7 @@ public class QuinielaRepository : GenericRepository<Quiniela>, IQuinielaReposito
             .Include(q => q.League)
                 .ThenInclude(l => l!.Sport)
             .Include(q => q.Owner)
+            .Include(q => q.Season)
             .Include(q => q.Members)
                 .ThenInclude(m => m.User)
             .FirstOrDefaultAsync(q => q.Id == id);

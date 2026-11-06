@@ -57,6 +57,9 @@ public class PickApplication : IPickApplication
             return response;
         }
 
+        // SPEC-020: una quiniela creada antes de que su liga tuviera temporada toma la vigente al primer uso.
+        await UseCases.Scoring.QuinielaSeasonResolver.EnsureSeasonAssignedAsync(_unitOfWork, quiniela);
+
         // 4. Verificar partido
         var match = await _unitOfWork.Matches.GetAsync(request.MatchId);
         if (match == null)
@@ -79,6 +82,22 @@ public class PickApplication : IPickApplication
         {
             response.isSuccess = false;
             response.Message = "Esta quiniela es de Eventos Personalizados. Los pronósticos se realizan en el módulo de eventos.";
+            return response;
+        }
+
+        // Regla (SPEC-020): una quiniela archivada es de solo lectura
+        if (quiniela.ArchivedAt != null)
+        {
+            response.isSuccess = false;
+            response.Message = "La quiniela está archivada y es de solo lectura.";
+            return response;
+        }
+
+        // Regla (SPEC-020): solo se pronostican partidos de la temporada de la quiniela
+        if (quiniela.SeasonId.HasValue && week.SeasonId != quiniela.SeasonId)
+        {
+            response.isSuccess = false;
+            response.Message = "El partido no pertenece a la temporada de esta quiniela.";
             return response;
         }
 
@@ -420,6 +439,20 @@ public class PickApplication : IPickApplication
         {
             response.isSuccess = false;
             response.Message = "La jornada no existe.";
+            return response;
+        }
+
+        if (quiniela.ArchivedAt != null)
+        {
+            response.isSuccess = false;
+            response.Message = "La quiniela está archivada y es de solo lectura.";
+            return response;
+        }
+
+        if (quiniela.SeasonId.HasValue && week.SeasonId != quiniela.SeasonId)
+        {
+            response.isSuccess = false;
+            response.Message = "La jornada no pertenece a la temporada de esta quiniela.";
             return response;
         }
 

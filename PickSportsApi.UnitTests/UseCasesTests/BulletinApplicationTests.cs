@@ -223,6 +223,49 @@ public class BulletinApplicationTests
     }
 
     [Fact]
+    public async Task GetBulletinAsync_SinWeekId_QuinielaConSeasonId_ResuelveDentroDeSuTemporadaAunqueLaVigenteSeaOtra()
+    {
+        // Arrange: la quiniela juega la temporada 50; la temporada vigente de la liga es la 77 (SPEC-020)
+        const int otherSeasonId = 77;
+        SetupScoredWeekGraph(setupSeason: false);
+        var quiniela = BuildQuiniela();
+        quiniela.SeasonId = SeasonId;
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+
+        _mockUow.Setup(u => u.Seasons.GetCurrentSeasonAsync(LeagueId))
+            .ReturnsAsync(new Season { Id = otherSeasonId, LeagueId = LeagueId, Name = "Clausura 2027", IsCurrent = true });
+        _mockUow.Setup(u => u.Weeks.GetBySeasonIdAsync(otherSeasonId)).ReturnsAsync(new List<Week>
+        {
+            new() { Id = 900, SeasonId = otherSeasonId, WeekNumber = 20, Name = "Jornada 20", Status = "SCORED" }
+        });
+        _mockUow.Setup(u => u.Weeks.GetBySeasonIdAsync(SeasonId)).ReturnsAsync(BuildWeeks());
+
+        // Act
+        var result = await _sut.GetBulletinAsync(QuinielaId, null);
+
+        // Assert: edición de la temporada de la quiniela (J7), no la J20 de la temporada vigente de la liga
+        result.isSuccess.Should().BeTrue();
+        result.Data!.WeekId.Should().Be(ScoredWeekId);
+        _mockUow.Verify(u => u.Weeks.GetBySeasonIdAsync(SeasonId), Times.AtLeastOnce);
+        _mockUow.Verify(u => u.Weeks.GetBySeasonIdAsync(otherSeasonId), Times.Never);
+        _mockUow.Verify(u => u.Seasons.GetCurrentSeasonAsync(LeagueId), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetBulletinAsync_SinWeekId_QuinielaSinSeasonId_UsaTemporadaVigenteDeLaLiga()
+    {
+        // Arrange: SeasonId null conserva el comportamiento anterior
+        SetupScoredWeekGraph();
+
+        // Act
+        var result = await _sut.GetBulletinAsync(QuinielaId, null);
+
+        // Assert
+        result.isSuccess.Should().BeTrue();
+        _mockUow.Verify(u => u.Seasons.GetCurrentSeasonAsync(LeagueId), Times.Once);
+    }
+
+    [Fact]
     public async Task GetBulletinAsync_JornadaScored_MapeaPodioConDesempateEnCascada()
     {
         // Arrange

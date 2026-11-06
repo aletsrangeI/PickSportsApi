@@ -62,7 +62,7 @@ public class BulletinApplication : IBulletinApplication
         }
         else
         {
-            week = await ResolveLatestEditionWeekAsync(quiniela.LeagueId.Value);
+            week = await ResolveLatestEditionWeekAsync(quiniela);
         }
 
         if (week == null)
@@ -474,12 +474,13 @@ public class BulletinApplication : IBulletinApplication
         };
     }
 
-    private async Task<Week?> ResolveLatestEditionWeekAsync(int leagueId)
+    private async Task<Week?> ResolveLatestEditionWeekAsync(Quiniela quiniela)
     {
-        var season = await _unitOfWork.Seasons.GetCurrentSeasonAsync(leagueId);
-        if (season == null) return null;
+        // SPEC-020: la temporada es la de la quiniela (SeasonId); con null, la vigente de la liga.
+        var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
+        if (seasonId == null) return null;
 
-        var weeks = (await _unitOfWork.Weeks.GetBySeasonIdAsync(season.Id)).ToList();
+        var weeks = (await _unitOfWork.Weeks.GetBySeasonIdAsync(seasonId.Value)).ToList();
         if (weeks.Count == 0) return null;
 
         return weeks
