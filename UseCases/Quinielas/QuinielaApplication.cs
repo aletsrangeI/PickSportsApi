@@ -250,6 +250,22 @@ public class QuinielaApplication : IQuinielaApplication
                     throw new InvalidOperationException("No se pudo copiar a un miembro a la nueva temporada.");
             }
 
+            // 9b. SPEC-013: la copa y el castigo que fijó el campeón de duelos pasan a la nueva temporada
+            var duels = _unitOfWork.Duels;
+            var previousDuelInfo = duels == null ? null : await duels.GetSeasonInfoAsync(quinielaId);
+            if (duels != null && previousDuelInfo?.ClosedAt != null
+                && (!string.IsNullOrWhiteSpace(previousDuelInfo.CupName) || !string.IsNullOrWhiteSpace(previousDuelInfo.PunishmentText)))
+            {
+                await duels.UpsertSeasonInfoAsync(new QuinielaDuelSeason
+                {
+                    QuinielaId = newQuiniela.Id,
+                    Seed = 0,
+                    GeneratedAt = DateTime.UtcNow,
+                    CupName = previousDuelInfo.CupName,
+                    PunishmentText = previousDuelInfo.PunishmentText,
+                });
+            }
+
             // 10. Último paso: archivar la anterior
             quiniela.IsActive = false;
             quiniela.ArchivedAt = DateTime.UtcNow;

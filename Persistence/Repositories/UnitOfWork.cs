@@ -35,6 +35,7 @@ public class UnitOfWork : IUnitOfWork
         Liguilla = new LiguillaRepository(_dbContext);
         SeasonWrappedSnapshots = new SeasonWrappedSnapshotRepository(_dbContext);
         Achievements = new AchievementRepository(_dbContext);
+        Duels = new DuelRepository(_dbContext);
     }
 
     public IUserRepository Users { get; }
@@ -57,6 +58,7 @@ public class UnitOfWork : IUnitOfWork
     public ILiguillaRepository Liguilla { get; }
     public ISeasonWrappedSnapshotRepository SeasonWrappedSnapshots { get; }
     public IAchievementRepository Achievements { get; }
+    public IDuelRepository Duels { get; }
     public ICatalogoRepository Catalogos { get; }
     public IContenidoCatalogoRepository ContenidoCatalogos { get; }
     public IFormFieldRepository FormFields { get; }

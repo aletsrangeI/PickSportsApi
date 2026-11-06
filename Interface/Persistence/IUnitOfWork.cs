@@ -22,6 +22,7 @@ public interface IUnitOfWork : IDisposable
     ILiguillaRepository Liguilla { get; }
     ISeasonWrappedSnapshotRepository SeasonWrappedSnapshots { get; }
     IAchievementRepository Achievements { get; }
+    IDuelRepository Duels { get; }
 
     // Dynamic Form Repositories
     ICatalogoRepository Catalogos { get; }

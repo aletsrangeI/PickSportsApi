@@ -60,6 +60,7 @@ public static class ConfigureServices
         services.AddScoped<IWrappedApplication, UseCases.Wrapped.WrappedApplication>();
         services.AddScoped<IAchievementApplication, UseCases.Gamification.AchievementApplication>();
         services.AddScoped<IGamificationApplication, UseCases.Gamification.GamificationApplication>();
+        services.AddScoped<IDuelApplication, UseCases.Duels.DuelApplication>();
 
         // Validators
         services.AddTransient<RegisterRequestDtoValidator>();

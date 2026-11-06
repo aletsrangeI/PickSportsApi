@@ -87,7 +87,8 @@ public class AchievementEvaluator
                     Add(member.Id, AchievementCatalog.SemanaInvicta);
                 }
 
-                if (MaxHitStreak(gradedWeek) >= 5) Add(member.Id, AchievementCatalog.RachaDeFuego);
+                // La racha se mide sobre TODOS los picks de la jornada: un pick sin calificar corta la racha.
+                if (MaxHitStreak(weekPicks) >= 5) Add(member.Id, AchievementCatalog.RachaDeFuego);
             }
 
             if (noAutoWeeks >= 10) Add(member.Id, AchievementCatalog.ConstanciaDeAcero);
@@ -140,10 +141,10 @@ public class AchievementEvaluator
 
     public static int WeekKey(Pick p) => p.Match?.WeekId is > 0 ? p.Match.WeekId : p.Match?.Week?.Id ?? 0;
 
-    private static int MaxHitStreak(IEnumerable<Pick> gradedWeekPicks)
+    private static int MaxHitStreak(IEnumerable<Pick> weekPicks)
     {
         int best = 0, current = 0;
-        foreach (var p in gradedWeekPicks.OrderBy(p => p.Match?.DateUtc ?? DateTime.MinValue).ThenBy(p => p.MatchId))
+        foreach (var p in weekPicks.OrderBy(p => p.Match?.DateUtc ?? DateTime.MinValue).ThenBy(p => p.MatchId))
         {
             current = p.IsHit == true ? current + 1 : 0;
             if (current > best) best = current;

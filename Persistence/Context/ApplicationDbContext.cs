@@ -35,6 +35,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<WeeklyBulletin> WeeklyBulletins { get; set; }
     public DbSet<SeasonWrappedSnapshot> SeasonWrappedSnapshots { get; set; }
     public DbSet<UserAchievement> UserAchievements { get; set; }
+    public DbSet<DuelFixture> DuelFixtures { get; set; }
+    public DbSet<QuinielaDuelSeason> QuinielaDuelSeasons { get; set; }
     public DbSet<QuinielaChallenge> QuinielaChallenges { get; set; }
     public DbSet<QuinielaChallengeParticipant> QuinielaChallengeParticipants { get; set; }
     public DbSet<PickAuditLog> PickAuditLogs { get; set; }

@@ -196,7 +196,8 @@ public class ScoringEngine
         IEnumerable<QuinielaMember> members,
         IEnumerable<Pick> weekPicks,
         IEnumerable<Match> weekMatches,
-        bool includeHeat = false)
+        bool includeHeat = false,
+        bool includeTitle = false)
     {
         // SPEC-013: includeHeat llena MemberStandingDto.Heat (racha visual). Con false no cambia nada.
         var weekMatchesList = weekMatches.ToList();
@@ -250,9 +251,7 @@ public class ScoringEngine
                 CurrentStreak = member.CurrentStreak,
                 BestStreak = member.BestStreak,
                 Heat = includeHeat ? ComputeHeat(mPicks, matchDateById) : null,
-                EquippedTitle = includeHeat && !string.IsNullOrWhiteSpace(member.User?.EquippedTitleCode)
-                    ? Domain.Gamification.AchievementCatalog.Find(member.User!.EquippedTitleCode!)?.TitleName
-                    : null
+                EquippedTitle = ResolveTitle(member, includeHeat || includeTitle)
             });
         }
 
@@ -272,6 +271,11 @@ public class ScoringEngine
 
         return sorted;
     }
+
+    private static string? ResolveTitle(QuinielaMember member, bool include)
+        => include && !string.IsNullOrWhiteSpace(member.User?.EquippedTitleCode)
+            ? Domain.Gamification.AchievementCatalog.Find(member.User!.EquippedTitleCode!)?.TitleName
+            : null;
 
     /// <summary>
     /// Racha visual final de la jornada: "FIRE" si los ultimos 4 o mas picks calificados son aciertos
@@ -306,7 +310,8 @@ public class ScoringEngine
         IEnumerable<Pick> allPicks,
         int seasonId,
         int uptoWeekNumber,
-        IEnumerable<WeeklyAward>? awards = null)
+        IEnumerable<WeeklyAward>? awards = null,
+        bool includeTitle = false)
     {
         var memberList = members.ToList();
         var seasonPicks = allPicks
@@ -316,7 +321,7 @@ public class ScoringEngine
             .Where(a => a.AwardType == "MVP" && a.Week != null && a.Week.SeasonId == seasonId)
             .ToList();
 
-        var sortedGeneral = BuildGeneralTable(memberList, seasonPicks, seasonMvps, uptoWeekNumber);
+        var sortedGeneral = BuildGeneralTable(memberList, seasonPicks, seasonMvps, uptoWeekNumber, includeTitle);
 
         if (uptoWeekNumber > 1)
         {
@@ -339,7 +344,8 @@ public class ScoringEngine
         List<QuinielaMember> members,
         List<Pick> seasonPicks,
         List<WeeklyAward> seasonMvps,
-        int uptoWeekNumber)
+        int uptoWeekNumber,
+        bool includeTitle = false)
     {
         var picksByMember = seasonPicks
             .Where(p => p.Match.Week.WeekNumber <= uptoWeekNumber)
@@ -385,7 +391,8 @@ public class ScoringEngine
                 Somniferos = mHistorical.Count(p => p.IsSomnifero),
                 EmpatesFallidos = mHistorical.Count(p => p.IsEmpateFallido),
                 CurrentStreak = currentStreak,
-                BestStreak = bestStreak
+                BestStreak = bestStreak,
+                EquippedTitle = ResolveTitle(m, includeTitle)
             }, mvpCountByMember.GetValueOrDefault(m.Id), hitsByRecentWeek));
         }
 

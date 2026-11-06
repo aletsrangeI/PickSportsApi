@@ -65,11 +65,11 @@ public class ScoringApplication : IScoringApplication
             ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value)
             : null;
         bool includeHeat = quiniela.GamificationEnabled && league?.IsPlayoffWeek(week.WeekNumber) != true;
-        var weeklyStandings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches, includeHeat: includeHeat);
+        var weeklyStandings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches, includeHeat: includeHeat, includeTitle: quiniela.GamificationEnabled);
 
         // 2. Tabla General Acumulada de la temporada (con delta respecto a la jornada anterior)
         var seasonAwards = await _unitOfWork.WeeklyAwards.GetAllAwardsForQuinielaAsync(quinielaId);
-        var sortedGeneral = _scoringEngine.CalculateGeneralStandings(members, allHistoricalPicks, week.SeasonId, week.WeekNumber, seasonAwards);
+        var sortedGeneral = _scoringEngine.CalculateGeneralStandings(members, allHistoricalPicks, week.SeasonId, week.WeekNumber, seasonAwards, includeTitle: quiniela.GamificationEnabled);
 
         var finishedMatchesCount = matches.Count(m => string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase));
 

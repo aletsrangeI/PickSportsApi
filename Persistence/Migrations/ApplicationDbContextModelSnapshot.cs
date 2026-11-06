@@ -116,6 +116,85 @@ namespace Persistence.Migrations
                     b.ToTable("ContenidoCatalogos");
                 });
 
+            modelBuilder.Entity("Domain.Entities.DuelFixture", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("AwayHits")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("AwayMemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("AwayRankBefore")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("HomeHits")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("HomeMemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("HomeRankBefore")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("Leg")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("QuinielaId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("Result")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
+                    b.Property<int>("Round")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("WeekNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("WonByAdvantage")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AwayMemberId");
+
+                    b.HasIndex("HomeMemberId");
+
+                    b.HasIndex("QuinielaId", "WeekNumber");
+
+                    b.HasIndex("QuinielaId", "WeekNumber", "HomeMemberId")
+                        .IsUnique();
+
+                    b.ToTable("DuelFixtures", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.EspnHealthLog", b =>
                 {
                     b.Property<int>("Id")
@@ -1392,6 +1471,64 @@ namespace Persistence.Migrations
                     b.ToTable("QuinielaChallengeParticipants", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.QuinielaDuelSeason", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<int?>("ChampionMemberId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ClosedAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("CupName")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)");
+
+                    b.Property<DateTime>("GeneratedAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PunishmentText")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("QuinielaId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Seed")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChampionMemberId");
+
+                    b.HasIndex("QuinielaId")
+                        .IsUnique();
+
+                    b.ToTable("QuinielaDuelSeasons", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.QuinielaMember", b =>
                 {
                     b.Property<int>("Id")
@@ -2168,6 +2305,32 @@ namespace Persistence.Migrations
                     b.Navigation("Catalogo");
                 });
 
+            modelBuilder.Entity("Domain.Entities.DuelFixture", b =>
+                {
+                    b.HasOne("Domain.Entities.QuinielaMember", "AwayMember")
+                        .WithMany()
+                        .HasForeignKey("AwayMemberId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Domain.Entities.QuinielaMember", "HomeMember")
+                        .WithMany()
+                        .HasForeignKey("HomeMemberId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Domain.Entities.Quiniela", "Quiniela")
+                        .WithMany()
+                        .HasForeignKey("QuinielaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AwayMember");
+
+                    b.Navigation("HomeMember");
+
+                    b.Navigation("Quiniela");
+                });
+
             modelBuilder.Entity("Domain.Entities.EventGroup", b =>
                 {
                     b.HasOne("Domain.Entities.Quiniela", "Quiniela")
@@ -2533,6 +2696,24 @@ namespace Persistence.Migrations
                     b.Navigation("EliminatedAtMatch");
 
                     b.Navigation("Member");
+                });
+
+            modelBuilder.Entity("Domain.Entities.QuinielaDuelSeason", b =>
+                {
+                    b.HasOne("Domain.Entities.QuinielaMember", "ChampionMember")
+                        .WithMany()
+                        .HasForeignKey("ChampionMemberId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Domain.Entities.Quiniela", "Quiniela")
+                        .WithMany()
+                        .HasForeignKey("QuinielaId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ChampionMember");
+
+                    b.Navigation("Quiniela");
                 });
 
             modelBuilder.Entity("Domain.Entities.QuinielaMember", b =>

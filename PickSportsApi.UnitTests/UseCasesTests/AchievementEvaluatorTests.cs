@@ -157,6 +157,25 @@ public class AchievementEvaluatorTests
     }
 
     [Fact]
+    public void RachaDeFuego_UnPickPendienteEnMedio_CortaLaRacha()
+    {
+        var ms = TrophyScenario.WeekMatches(1, 6);
+        // acierto, acierto, PENDIENTE, acierto, acierto, acierto: la racha real maxima es 3
+        var picks = ms.Select((m, i) => TrophyScenario.Pick(1, m, i == 2 ? null : true)).ToList();
+
+        CodesFor(1, TrophyScenario.Members(1), picks).Should().NotContain(AchievementCatalog.RachaDeFuego);
+    }
+
+    [Fact]
+    public void RachaDeFuego_CincoAciertosCalificadosSeguidosConPendienteAlFinal_SeOtorga()
+    {
+        var ms = TrophyScenario.WeekMatches(1, 6);
+        var picks = ms.Select((m, i) => TrophyScenario.Pick(1, m, i == 5 ? null : true)).ToList();
+
+        CodesFor(1, TrophyScenario.Members(1), picks).Should().Contain(AchievementCatalog.RachaDeFuego);
+    }
+
+    [Fact]
     public void RachaDeFuego_RachaRotaPorUnFallo_NoSeOtorga()
     {
         var ms = TrophyScenario.WeekMatches(1, 9);
