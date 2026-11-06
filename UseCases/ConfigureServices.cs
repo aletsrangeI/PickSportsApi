@@ -58,6 +58,8 @@ public static class ConfigureServices
         services.AddScoped<IChallengeApplication, UseCases.Challenges.ChallengeApplication>();
         services.AddSingleton<UseCases.Wrapped.SeasonWrappedEngine>();
         services.AddScoped<IWrappedApplication, UseCases.Wrapped.WrappedApplication>();
+        services.AddScoped<IAchievementApplication, UseCases.Gamification.AchievementApplication>();
+        services.AddScoped<IGamificationApplication, UseCases.Gamification.GamificationApplication>();
 
         // Validators
         services.AddTransient<RegisterRequestDtoValidator>();

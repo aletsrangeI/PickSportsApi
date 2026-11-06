@@ -20,6 +20,8 @@ public class QuinielaResponseDto
     public string? SeasonName { get; set; }
     /// <summary>True si la quiniela se archivó al abrir la siguiente temporada (histórica, solo lectura).</summary>
     public bool IsArchived { get; set; }
+    /// <summary>SPEC-013: trofeos, rachas y duelos activos en esta quiniela.</summary>
+    public bool GamificationEnabled { get; set; }
     public int OwnerId { get; set; }
     public string OwnerName { get; set; } = null!;
     public string? UserRole { get; set; }

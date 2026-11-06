@@ -34,6 +34,7 @@ public class UnitOfWork : IUnitOfWork
         CustomEvents = new CustomEventRepository(_dbContext);
         Liguilla = new LiguillaRepository(_dbContext);
         SeasonWrappedSnapshots = new SeasonWrappedSnapshotRepository(_dbContext);
+        Achievements = new AchievementRepository(_dbContext);
     }
 
     public IUserRepository Users { get; }
@@ -55,6 +56,7 @@ public class UnitOfWork : IUnitOfWork
     public IEspnHealthLogRepository EspnHealthLogs { get; }
     public ILiguillaRepository Liguilla { get; }
     public ISeasonWrappedSnapshotRepository SeasonWrappedSnapshots { get; }
+    public IAchievementRepository Achievements { get; }
     public ICatalogoRepository Catalogos { get; }
     public IContenidoCatalogoRepository ContenidoCatalogos { get; }
     public IFormFieldRepository FormFields { get; }

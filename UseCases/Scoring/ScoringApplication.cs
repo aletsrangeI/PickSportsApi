@@ -11,15 +11,18 @@ public class ScoringApplication : IScoringApplication
     private readonly IUnitOfWork _unitOfWork;
     private readonly ScoringEngine _scoringEngine;
     private readonly IChallengeApplication? _challengeApplication;
+    private readonly IGamificationApplication? _gamificationApplication;
 
     public ScoringApplication(
         IUnitOfWork unitOfWork,
         ScoringEngine scoringEngine,
-        IChallengeApplication? challengeApplication = null)
+        IChallengeApplication? challengeApplication = null,
+        IGamificationApplication? gamificationApplication = null)
     {
         _unitOfWork = unitOfWork;
         _scoringEngine = scoringEngine;
         _challengeApplication = challengeApplication;
+        _gamificationApplication = gamificationApplication;
     }
 
     public async Task<Response<QuinielaStandingsResponseDto>> GetStandingsAsync(int quinielaId, int weekId)
@@ -57,7 +60,12 @@ public class ScoringApplication : IScoringApplication
         _scoringEngine.ApplyRecidivistAutofillPenalty(members, weekPicks, allHistoricalPicks, week.WeekNumber, seasonId: week.SeasonId);
 
         // 1. Tabla Semanal (Desempate en cascada)
-        var weeklyStandings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches);
+        // La racha visual (SPEC-013) no aplica en Liguilla.
+        var league = quiniela.GamificationEnabled && quiniela.LeagueId.HasValue
+            ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value)
+            : null;
+        bool includeHeat = quiniela.GamificationEnabled && league?.IsPlayoffWeek(week.WeekNumber) != true;
+        var weeklyStandings = _scoringEngine.CalculateWeeklyStandings(members, weekPicks, matches, includeHeat: includeHeat);
 
         // 2. Tabla General Acumulada de la temporada (con delta respecto a la jornada anterior)
         var seasonAwards = await _unitOfWork.WeeklyAwards.GetAllAwardsForQuinielaAsync(quinielaId);
@@ -210,6 +218,9 @@ public class ScoringApplication : IScoringApplication
             var fallbackChallengeApp = new UseCases.Challenges.ChallengeApplication(_unitOfWork, new UseCases.Challenges.ChallengeScoringEngine(), _scoringEngine);
             await fallbackChallengeApp.ResolveWeekChallengesAsync(quinielaId, weekId);
         }
+
+        // 9. Gamificacion (SPEC-013): trofeos (y, en la Etapa 2, duelos). Solo actua si la quiniela la tiene activada.
+        if (_gamificationApplication != null) await _gamificationApplication.ResolveWeekAsync(quinielaId, weekId);
 
         await _unitOfWork.Save();
 

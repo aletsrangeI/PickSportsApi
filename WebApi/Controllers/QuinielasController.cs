@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using DTO.Gamification;
 using DTO.Quiniela;
 using Interface.UseCases;
 using Microsoft.AspNetCore.Authorization;
@@ -80,6 +81,21 @@ public class QuinielasController : ControllerBase
         if (userId <= 0) return Unauthorized();
 
         var response = await _quinielaApplication.StartNextSeasonAsync(id, userId, request ?? new StartNextSeasonDto());
+        if (!response.isSuccess)
+        {
+            return BadRequest(response);
+        }
+
+        return Ok(response);
+    }
+
+    [HttpPut("{id}/gamification")]
+    public async Task<IActionResult> SetGamification(int id, [FromBody] SetGamificationDto request)
+    {
+        var userId = GetCurrentUserId();
+        if (userId <= 0) return Unauthorized();
+
+        var response = await _quinielaApplication.SetGamificationAsync(id, userId, request.Enabled);
         if (!response.isSuccess)
         {
             return BadRequest(response);

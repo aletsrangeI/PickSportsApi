@@ -20,6 +20,8 @@ public class QuinielaConfiguration : IEntityTypeConfiguration<Quiniela>
         builder.Property(q => q.ThirdPlacePct).HasPrecision(5, 2).HasDefaultValue(10.00m);
         builder.Property(q => q.QuinielaType).HasDefaultValue(QuinielaType.Sports);
 
+        builder.Property(q => q.GamificationEnabled).HasDefaultValue(false);
+
         builder.HasIndex(q => q.InviteCode).IsUnique();
 
         builder.HasOne(q => q.League)

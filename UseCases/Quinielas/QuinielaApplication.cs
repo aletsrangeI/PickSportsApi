@@ -213,6 +213,7 @@ public class QuinielaApplication : IQuinielaApplication
             SecondPlacePct = quiniela.SecondPlacePct,
             ThirdPlacePct = quiniela.ThirdPlacePct,
             SeasonId = next.Id,
+            GamificationEnabled = quiniela.GamificationEnabled,
             IsActive = true,
             Active = true,
             Created = now
@@ -272,6 +273,48 @@ public class QuinielaApplication : IQuinielaApplication
 
         response.isSuccess = true;
         response.Message = "Nueva temporada creada exitosamente.";
+        response.Data = dto;
+        return response;
+    }
+
+    public async Task<Response<QuinielaResponseDto>> SetGamificationAsync(int quinielaId, int userId, bool enabled)
+    {
+        var response = new Response<QuinielaResponseDto>();
+
+        Response<QuinielaResponseDto> Fail(string message)
+        {
+            response.isSuccess = false;
+            response.Message = message;
+            return response;
+        }
+
+        var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
+        if (quiniela == null) return Fail("La quiniela no existe.");
+
+        if (quiniela.QuinielaType == QuinielaType.CustomEvents)
+            return Fail("La gamificación solo aplica a quinielas deportivas.");
+
+        var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
+        var isOwnerOrAdmin = membership != null && (membership.Role == "OWNER" || membership.Role == "ADMIN");
+        if (!isOwnerOrAdmin)
+        {
+            var user = await _unitOfWork.Users.GetAsync(userId);
+            isOwnerOrAdmin = user != null && user.Role == "ADMIN";
+        }
+        if (!isOwnerOrAdmin) return Fail("Solo el Owner o un Admin puede cambiar la gamificación.");
+
+        if (quiniela.SeasonId == null) return Fail("La quiniela no tiene temporada asignada.");
+
+        if (!quiniela.IsActive) return Fail("La quiniela está archivada.");
+
+        quiniela.GamificationEnabled = enabled;
+        await _unitOfWork.Quinielas.UpdateAsync(quiniela);
+
+        var dto = _mapper.Map<QuinielaResponseDto>(quiniela);
+        dto.UserRole = membership?.Role ?? "ADMIN";
+
+        response.isSuccess = true;
+        response.Message = "Gamificación actualizada.";
         response.Data = dto;
         return response;
     }

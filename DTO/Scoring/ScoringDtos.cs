@@ -19,6 +19,10 @@ public class MemberStandingDto
     public int EmpatesFallidos { get; set; }
     public int CurrentStreak { get; set; }
     public int BestStreak { get; set; }
+    /// <summary>SPEC-013: "FIRE" (>= 4 aciertos seguidos al final de la jornada), "ICE" (>= 4 fallos seguidos) o null.</summary>
+    public string? Heat { get; set; }
+    /// <summary>SPEC-013: titulo honorifico equipado (solo tabla semanal de quinielas con gamificacion).</summary>
+    public string? EquippedTitle { get; set; }
 }
 
 public class QuinielaStandingsResponseDto

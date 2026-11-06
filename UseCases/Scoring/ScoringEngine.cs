@@ -195,9 +195,15 @@ public class ScoringEngine
     public List<MemberStandingDto> CalculateWeeklyStandings(
         IEnumerable<QuinielaMember> members,
         IEnumerable<Pick> weekPicks,
-        IEnumerable<Match> weekMatches)
+        IEnumerable<Match> weekMatches,
+        bool includeHeat = false)
     {
-        var finishedMatchIds = weekMatches
+        // SPEC-013: includeHeat llena MemberStandingDto.Heat (racha visual). Con false no cambia nada.
+        var weekMatchesList = weekMatches.ToList();
+        var matchDateById = weekMatchesList
+            .GroupBy(m => m.Id)
+            .ToDictionary(g => g.Key, g => g.First().DateUtc);
+        var finishedMatchIds = weekMatchesList
             .Where(m => string.Equals(m.StatusState, "post", StringComparison.OrdinalIgnoreCase) 
                         && !string.IsNullOrWhiteSpace(m.WinnerAbbr))
             .Select(m => m.Id)
@@ -242,7 +248,11 @@ public class ScoringEngine
                 Somniferos = somniferos,
                 EmpatesFallidos = empatesFallidos,
                 CurrentStreak = member.CurrentStreak,
-                BestStreak = member.BestStreak
+                BestStreak = member.BestStreak,
+                Heat = includeHeat ? ComputeHeat(mPicks, matchDateById) : null,
+                EquippedTitle = includeHeat && !string.IsNullOrWhiteSpace(member.User?.EquippedTitleCode)
+                    ? Domain.Gamification.AchievementCatalog.Find(member.User!.EquippedTitleCode!)?.TitleName
+                    : null
             });
         }
 
@@ -261,6 +271,27 @@ public class ScoringEngine
         }
 
         return sorted;
+    }
+
+    /// <summary>
+    /// Racha visual final de la jornada: "FIRE" si los ultimos 4 o mas picks calificados son aciertos
+    /// consecutivos, "ICE" si son fallos consecutivos, null en otro caso. Orden por fecha del partido, luego MatchId.
+    /// </summary>
+    private static string? ComputeHeat(List<Pick> memberPicks, Dictionary<int, DateTime> matchDateById)
+    {
+        var graded = memberPicks
+            .Where(p => p.IsHit.HasValue)
+            .OrderBy(p => matchDateById.TryGetValue(p.MatchId, out var d) ? d : DateTime.MaxValue)
+            .ThenBy(p => p.MatchId)
+            .ToList();
+        if (graded.Count < 4) return null;
+
+        bool last = graded[^1].IsHit!.Value;
+        int run = 0;
+        for (int i = graded.Count - 1; i >= 0 && graded[i].IsHit!.Value == last; i--) run++;
+
+        if (run < 4) return null;
+        return last ? "FIRE" : "ICE";
     }
 
     /// <summary>

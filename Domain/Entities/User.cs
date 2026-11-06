@@ -18,7 +18,10 @@ public class User : BaseAuditableEntity
     public string? AvatarUrl { get; set; }
     public string Role { get; set; } = "USER"; // ADMIN, USER
     public string? Token { get; set; }
-    
+
+    /// <summary>SPEC-013: codigo del trofeo cuyo titulo tiene equipado (AchievementCatalog.Find(code).TitleName).</summary>
+    public string? EquippedTitleCode { get; set; }
+
     public string? RefreshToken { get; set; }
     public DateTime? RefreshTokenExpiryTime { get; set; }
 

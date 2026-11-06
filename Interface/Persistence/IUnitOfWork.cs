@@ -21,6 +21,7 @@ public interface IUnitOfWork : IDisposable
     IEspnHealthLogRepository EspnHealthLogs { get; }
     ILiguillaRepository Liguilla { get; }
     ISeasonWrappedSnapshotRepository SeasonWrappedSnapshots { get; }
+    IAchievementRepository Achievements { get; }
 
     // Dynamic Form Repositories
     ICatalogoRepository Catalogos { get; }

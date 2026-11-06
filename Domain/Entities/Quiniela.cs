@@ -23,6 +23,9 @@ public class Quiniela : BaseAuditableEntity
     /// <summary>Fecha en que la quiniela se archivó al abrir la siguiente temporada (SPEC-020). Null = no archivada por temporada; con IsActive=false significa "oculta".</summary>
     public DateTime? ArchivedAt { get; set; }
 
+    /// <summary>SPEC-013: activa trofeos, rachas y duelos en esta quiniela. Apagado por defecto (no altera quinielas existentes).</summary>
+    public bool GamificationEnabled { get; set; }
+
     public League? League { get; set; }
     public Season? Season { get; set; }
     public User Owner { get; set; } = null!;
