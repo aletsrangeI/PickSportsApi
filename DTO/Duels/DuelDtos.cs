@@ -9,6 +9,8 @@ public class DuelParticipantDto
     public string? AvatarUrl { get; set; }
     /// <summary>Titulo honorifico equipado (nombre, no codigo).</summary>
     public string? EquippedTitle { get; set; }
+    /// <summary>Racha vigente en la jornada ("FIRE" | "ICE" | null). Solo se llena en el Matchup, con gamificacion activa.</summary>
+    public string? Heat { get; set; }
 }
 
 public class DuelFixtureDto

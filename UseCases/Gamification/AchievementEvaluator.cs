@@ -29,6 +29,9 @@ public class AchievementEvaluator
     {
         var result = new Dictionary<int, HashSet<string>>();
 
+        // Los picks huerfanos (sin Match/Week) no pertenecen a ninguna jornada: no cuentan para nada.
+        seasonPicks = seasonPicks.Where(p => WeekKey(p) != 0).ToList();
+
         // Jornadas con al menos un pick calificado = jornadas calificadas de la temporada.
         var picksByWeek = seasonPicks.GroupBy(WeekKey).ToDictionary(g => g.Key, g => g.ToList());
         var qualifiedWeeks = picksByWeek

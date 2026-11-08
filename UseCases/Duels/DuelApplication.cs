@@ -478,6 +478,16 @@ public class DuelApplication : IDuelApplication
                     });
                 }
 
+                // Racha visual (FIRE/ICE) solo con gamificacion activa y fuera de Liguilla; sale de picks ya calificados.
+                var league = quiniela.LeagueId.HasValue ? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value) : null;
+                if (quiniela.GamificationEnabled && league?.IsPlayoffWeek(fixture.WeekNumber) != true)
+                {
+                    var members = await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId);
+                    var standings = _scoringEngine.CalculateWeeklyStandings(members, picks, matches, includeHeat: true);
+                    dto.Fixture.Home.Heat = standings.FirstOrDefault(s => s.MemberId == homeId)?.Heat;
+                    dto.Fixture.Away!.Heat = standings.FirstOrDefault(s => s.MemberId == awayId)?.Heat;
+                }
+
                 if (fixture.Result == null)
                 {
                     // En vivo: los aciertos aun no estan guardados en el duelo.

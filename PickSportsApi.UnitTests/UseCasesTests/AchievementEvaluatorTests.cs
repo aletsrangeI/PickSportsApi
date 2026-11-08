@@ -156,6 +156,28 @@ public class AchievementEvaluatorTests
         CodesFor(1, TrophyScenario.Members(1), picks).Should().Contain(AchievementCatalog.RachaDeFuego);
     }
 
+    [Theory]
+    [InlineData(3, new[] { 0, 1, 2, 4, 5, 6, 3 }, false)]  // por fecha: A A A F A A A (maxima 3); en la lista el fallo va al final
+    [InlineData(6, new[] { 0, 1, 2, 6, 3, 4, 5 }, true)]   // por fecha: A A A A A A F (6 seguidas); en la lista el fallo va en medio
+    public void RachaDeFuego_ElOrdenPorFechaDelPartidoDefineLaRacha(int dayOfMiss, int[] listOrder, bool expected)
+    {
+        var ms = TrophyScenario.WeekMatches(1, 7);   // fechas crecientes por indice
+        // Los picks se entregan en `listOrder` (distinto del orden por DateUtc): si se quitara el OrderBy el resultado se invertiria.
+        var picks = listOrder.Select(i => TrophyScenario.Pick(1, ms[i], i != dayOfMiss)).ToList();
+
+        CodesFor(1, TrophyScenario.Members(1), picks).Contains(AchievementCatalog.RachaDeFuego).Should().Be(expected);
+    }
+
+    [Fact]
+    public void PicksHuerfanosSinMatch_NoSumanJornadas()
+    {
+        // 4 jornadas reales + 3 picks sin Match: si los huerfanos contaran como una jornada ficticia saldrian 5 (FIEL)
+        var picks = Enumerable.Range(1, 4).Select(w => TrophyScenario.Pick(1, TrophyScenario.Match(w, w), false)).ToList();
+        picks.AddRange(Enumerable.Range(0, 3).Select(i => new Pick { MemberId = 1, MatchId = 500 + i, Match = null!, IsHit = false }));
+
+        CodesFor(1, TrophyScenario.Members(1), picks).Should().NotContain(AchievementCatalog.FielAlColiseo);
+    }
+
     [Fact]
     public void RachaDeFuego_UnPickPendienteEnMedio_CortaLaRacha()
     {

@@ -830,6 +830,67 @@ public class DuelApplicationTests
         result.Data.ChallengerAdvantage.Should().Be(expected);
     }
 
+    private static Ctx HeatCtx(int fixtureWeek, bool gamification)
+    {
+        var ctx = MatchupCtx(Fx(1, fixtureWeek, 1, 2), weekNumber: fixtureWeek).WithMembers(2);
+        ctx.Quiniela.GamificationEnabled = gamification;
+        var team = new Team { Name = "T" };
+        var matches = Enumerable.Range(1, 4).Select(i => new Match
+        {
+            Id = i, WeekId = WeekId, StatusState = "post", WinnerAbbr = "AME", HomeTeam = team, AwayTeam = team,
+            DateUtc = new DateTime(2026, 1, i),
+        }).ToList();
+        ctx.Uow.Setup(u => u.Matches.GetByWeekIdAsync(WeekId)).ReturnsAsync(matches);
+        ctx.WeekPicks = matches.SelectMany(m => new[]
+        {
+            new Pick { MemberId = 1, MatchId = m.Id, PickAbbr = "AME", IsHit = true },
+            new Pick { MemberId = 2, MatchId = m.Id, PickAbbr = "CHV", IsHit = false },
+        }).ToList();
+        return ctx;
+    }
+
+    [Fact]
+    public async Task GetMatchup_Gamificacion_LocalConCuatroAciertosFinales_EsFire()
+    {
+        var ctx = HeatCtx(3, gamification: true);
+
+        var data = (await ctx.Sut.GetMatchupAsync(QuinielaId, OwnerUserId, 1)).Data;
+
+        data.Fixture.Home.Heat.Should().Be("FIRE");
+    }
+
+    [Fact]
+    public async Task GetMatchup_Gamificacion_VisitanteConCuatroFallosFinales_EsIce()
+    {
+        var ctx = HeatCtx(3, gamification: true);
+
+        var data = (await ctx.Sut.GetMatchupAsync(QuinielaId, OwnerUserId, 1)).Data;
+
+        data.Fixture.Away!.Heat.Should().Be("ICE");
+    }
+
+    [Fact]
+    public async Task GetMatchup_GamificacionApagada_HeatEsNull()
+    {
+        var ctx = HeatCtx(3, gamification: false);
+
+        var data = (await ctx.Sut.GetMatchupAsync(QuinielaId, OwnerUserId, 1)).Data;
+
+        data.Fixture.Home.Heat.Should().BeNull();
+        data.Fixture.Away!.Heat.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetMatchup_Liguilla_HeatEsNull()
+    {
+        var ctx = HeatCtx(18, gamification: true); // WeeksCount = 17: la 18 es Liguilla
+
+        var data = (await ctx.Sut.GetMatchupAsync(QuinielaId, OwnerUserId, 1)).Data;
+
+        data.Fixture.Home.Heat.Should().BeNull();
+        data.Fixture.Away!.Heat.Should().BeNull();
+    }
+
     [Fact]
     public async Task GetMatchup_JornadaUno_SinVentaja()
     {
