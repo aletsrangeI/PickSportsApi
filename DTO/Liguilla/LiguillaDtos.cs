@@ -62,11 +62,25 @@ public class LiguillaBracketDetailDto
     public int BonusPoints { get; set; }
 
     public List<int> ShatteredTeamIds { get; set; } = new();
+
+    /// <summary>Picks por ronda (código de ronda → TeamIds por slot) para cualquier formato.</summary>
+    public Dictionary<string, List<int>> PicksByRound { get; set; } = new();
+}
+
+public class LiguillaRoundDto
+{
+    public string Code { get; set; } = string.Empty;
+    public int Order { get; set; }
+    public int WinnersToPick { get; set; }
+    public int PointsPerHit { get; set; }
+    public int NodeCount { get; set; }
 }
 
 public class LiguillaOverviewDto
 {
     public bool IsAvailable { get; set; }
+    public string? FormatCode { get; set; }
+    public List<LiguillaRoundDto> Rounds { get; set; } = new();
     public string Status { get; set; } = "HIDDEN"; // "HIDDEN", "WAITING_PLAY_IN", "OPEN_FOR_PICKS", "LOCKED_IN_PROGRESS", "FINISHED"
     public DateTime? LockDeadlineUtc { get; set; }
     public List<LiguillaTeamDto> QualifiedTeams { get; set; } = new();

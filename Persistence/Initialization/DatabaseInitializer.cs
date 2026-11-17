@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Domain.Common;
 using Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -77,16 +78,16 @@ public class DatabaseInitializer
         // 2. Ligas
         var leaguesToSeed = new[]
         {
-            new { SportId = soccer.Id, Code = "mex.1", Name = "Liga MX", Country = "México", EspnApiPath = "sports/soccer/mex.1", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/mex.1.png" },
-            new { SportId = soccer.Id, Code = "eng.1", Name = "Premier League", Country = "Inglaterra", EspnApiPath = "sports/soccer/eng.1", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/eng.1.png" },
-            new { SportId = soccer.Id, Code = "uefa.champions", Name = "UEFA Champions League", Country = "Europa", EspnApiPath = "sports/soccer/uefa.champions", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/uefa.champions.png" },
-            new { SportId = nfl.Id, Code = "nfl", Name = "NFL", Country = "Estados Unidos", EspnApiPath = "sports/football/nfl", Logo = "https://a.espncdn.com/i/leaguelogos/nfl/500/nfl.png" }
+            new { SportId = soccer.Id, Code = "mex.1", Name = "Liga MX", Country = "México", EspnApiPath = "sports/soccer/mex.1", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/mex.1.png", KnockoutFormatCode = (string?)KnockoutFormatCodes.FmfLiguilla },
+            new { SportId = soccer.Id, Code = "eng.1", Name = "Premier League", Country = "Inglaterra", EspnApiPath = "sports/soccer/eng.1", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/eng.1.png", KnockoutFormatCode = (string?)null },
+            new { SportId = soccer.Id, Code = "uefa.champions", Name = "UEFA Champions League", Country = "Europa", EspnApiPath = "sports/soccer/uefa.champions", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/uefa.champions.png", KnockoutFormatCode = (string?)KnockoutFormatCodes.UefaTwoLeg },
+            new { SportId = nfl.Id, Code = "nfl", Name = "NFL", Country = "Estados Unidos", EspnApiPath = "sports/football/nfl", Logo = "https://a.espncdn.com/i/leaguelogos/nfl/500/nfl.png", KnockoutFormatCode = (string?)KnockoutFormatCodes.NflReseededSingleGame }
         };
 
         foreach (var l in leaguesToSeed)
         {
-            var exists = await _context.Leagues.AnyAsync(x => x.Code == l.Code);
-            if (!exists)
+            var existingLeague = await _context.Leagues.FirstOrDefaultAsync(x => x.Code == l.Code);
+            if (existingLeague == null)
             {
                 await _context.Leagues.AddAsync(new League
                 {
@@ -96,13 +97,25 @@ public class DatabaseInitializer
                     Country = l.Country,
                     EspnApiPath = l.EspnApiPath,
                     LogoUrl = l.Logo,
+                    KnockoutFormatCode = l.KnockoutFormatCode,
                     Active = true,
                     Created = DateTime.UtcNow
                 });
             }
+            else if (existingLeague.KnockoutFormatCode == null && l.KnockoutFormatCode != null)
+            {
+                existingLeague.KnockoutFormatCode = l.KnockoutFormatCode;
+            }
         }
 
         await _context.SaveChangesAsync();
+
+        var nhlLeague = await _context.Leagues.FirstOrDefaultAsync(l => l.Code == "nhl");
+        if (nhlLeague != null && nhlLeague.KnockoutFormatCode == null)
+        {
+            nhlLeague.KnockoutFormatCode = KnockoutFormatCodes.NhlBestOf7;
+            await _context.SaveChangesAsync();
+        }
 
         // 3. Temporadas activas (Liga MX tiene 2 torneos anuales: Clausura y Apertura)
         var ligaMx = await _context.Leagues.FirstOrDefaultAsync(l => l.Code == "mex.1");

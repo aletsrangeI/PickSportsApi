@@ -46,6 +46,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<EspnHealthLog> EspnHealthLogs { get; set; }
     public DbSet<LiguillaNode> LiguillaNodes { get; set; }
     public DbSet<LiguillaBracket> LiguillaBrackets { get; set; }
+    public DbSet<LiguillaBracketPick> LiguillaBracketPicks { get; set; }
 
     // Custom Events DbSets
     public DbSet<EventGroup> EventGroups { get; set; }

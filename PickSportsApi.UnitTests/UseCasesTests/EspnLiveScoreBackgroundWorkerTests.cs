@@ -4,6 +4,7 @@ using DTO.Notifications;
 using DTO.Scoring;
 using Interface.Persistence;
 using Interface.UseCases;
+using Interface.UseCases.Knockout;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using WebApi.BackgroundServices;
@@ -569,5 +570,54 @@ public class EspnLiveScoreBackgroundWorkerTests
             4,
             It.Is<PushNotificationPayload>(p => p.Title.Contains("disponible")),
             default), Times.Once);
+    }
+
+    [Fact]
+    public async Task SyncKnockoutLeagues_DosCiclosSeguidos_SincronizaLaLigaUnaSolaVez()
+    {
+        // Arrange
+        const int leagueId = 7;
+        var knockoutSync = new Mock<IEspnKnockoutSyncService>();
+        var services = new Mock<IServiceProvider>();
+        services.Setup(s => s.GetService(typeof(IEspnKnockoutSyncService))).Returns(knockoutSync.Object);
+        _mockLeagues.Setup(l => l.GetAllAsync()).ReturnsAsync(new List<League>
+        {
+            new() { Id = leagueId, Name = "NHL", KnockoutFormatCode = "NHL_BEST_OF_7" },
+            new() { Id = 8, Name = "Premier", KnockoutFormatCode = null }
+        });
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        // Act
+        await worker.SyncKnockoutLeaguesAsync(services.Object, _mockUow.Object, CancellationToken.None);
+        await worker.SyncKnockoutLeaguesAsync(services.Object, _mockUow.Object, CancellationToken.None);
+
+        // Assert: dentro del intervalo no se repite y las ligas sin formato nunca se sincronizan
+        knockoutSync.Verify(k => k.SyncLeagueAsync(leagueId, It.IsAny<CancellationToken>()), Times.Once);
+        knockoutSync.Verify(k => k.SyncLeagueAsync(8, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncKnockoutLeagues_ConsultaFallida_SeRegistraYNoSeReintentaDentroDelIntervalo()
+    {
+        // Arrange
+        const int leagueId = 7;
+        var knockoutSync = new Mock<IEspnKnockoutSyncService>();
+        knockoutSync.Setup(k => k.SyncLeagueAsync(leagueId, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("ESPN caído"));
+        var services = new Mock<IServiceProvider>();
+        services.Setup(s => s.GetService(typeof(IEspnKnockoutSyncService))).Returns(knockoutSync.Object);
+        _mockLeagues.Setup(l => l.GetAllAsync()).ReturnsAsync(new List<League>
+        {
+            new() { Id = leagueId, Name = "NHL", KnockoutFormatCode = "NHL_BEST_OF_7" }
+        });
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        // Act
+        await worker.SyncKnockoutLeaguesAsync(services.Object, _mockUow.Object, CancellationToken.None);
+        await worker.SyncKnockoutLeaguesAsync(services.Object, _mockUow.Object, CancellationToken.None);
+
+        // Assert
+        knockoutSync.Verify(k => k.SyncLeagueAsync(leagueId, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLogger.Verify(l => l.LogError(It.Is<string>(m => m.Contains("eliminatorias")), It.IsAny<object[]>()), Times.Once);
     }
 }

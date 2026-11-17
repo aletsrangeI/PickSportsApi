@@ -12,6 +12,8 @@ public class LiguillaNodeConfiguration : IEntityTypeConfiguration<LiguillaNode>
         builder.HasKey(n => n.Id);
 
         builder.Property(n => n.Round).HasMaxLength(20).IsRequired();
+        builder.Property(n => n.EspnEventGroupKey).HasMaxLength(80);
+        builder.Property(n => n.Conference).HasMaxLength(10);
 
         builder.HasIndex(n => new { n.SeasonId, n.NodeNumber }).IsUnique();
 

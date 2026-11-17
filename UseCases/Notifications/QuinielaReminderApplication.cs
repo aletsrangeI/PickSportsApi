@@ -1,5 +1,6 @@
 using System.Globalization;
 using Common;
+using Domain.Common;
 using Domain.Entities;
 using DTO.Notifications;
 using Interface.Persistence;
@@ -9,6 +10,17 @@ namespace UseCases.Notifications;
 
 public class QuinielaReminderApplication : IQuinielaReminderApplication
 {
+    // SPEC-027: formato de eliminatoria de la liga (League.KnockoutFormatCode)
+
+    private const string FmfLiguillaTitle = "🏆 ¡Llegó la Liguilla: Pick'em ya disponible!";
+    private const string FmfLiguillaMessageTemplate = "¡Concluyó la fase regular! Ya puedes armar tu bracket en Pick'em Liguilla para {0}. ¡Haz tus pronósticos y gana la gloria!";
+
+    private const string PlayoffsTitle = "🏆 ¡Arrancan los Playoffs: Pick'em ya disponible!";
+    private const string PlayoffsMessageTemplate = "¡Concluyó la temporada regular! Ya puedes armar tu bracket de Playoffs en Pick'em para {0}. ¡Haz tus pronósticos y gana la gloria!";
+
+    private const string OctavosDeFinalTitle = "🏆 ¡Llegaron los Octavos de Final: Pick'em ya disponible!";
+    private const string OctavosDeFinalMessageTemplate = "¡Quedó definido el cuadro de la fase final! Ya puedes armar tu bracket de Octavos de Final en Pick'em para {0}. ¡Haz tus pronósticos y gana la gloria!";
+
     private readonly IUnitOfWork _unitOfWork;
     private readonly IWebPushNotificationService _webPushService;
     private readonly IAppLogger<QuinielaReminderApplication> _logger;
@@ -178,8 +190,17 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         DateTime nowUtc,
         CancellationToken ct)
     {
-        // Solo aplica si todas las jornadas regulares (<= 17) ya están SCORED
-        var regularWeeks = weeks.Where(w => w.WeekNumber <= 17).ToList();
+        // SPEC-027: el anuncio depende del formato de eliminatoria de la liga de la quiniela
+        if (!quiniela.LeagueId.HasValue) return 0;
+
+        var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value);
+        if (league is null || string.IsNullOrWhiteSpace(league.KnockoutFormatCode)) return 0;
+
+        var announcement = BuildAnnouncementCopy(league.KnockoutFormatCode, quiniela.Name);
+        if (announcement is null) return 0;
+
+        // Solo aplica si todas las jornadas regulares (<= WeeksCount de la liga) ya están SCORED
+        var regularWeeks = weeks.Where(w => w.WeekNumber <= league.WeeksCount).ToList();
         bool isRegularSeasonFinished = regularWeeks.Count > 0 && regularWeeks.All(w => string.Equals(w.Status, "SCORED", StringComparison.OrdinalIgnoreCase));
         if (!isRegularSeasonFinished) return 0;
 
@@ -187,9 +208,11 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         var alreadySent = await _unitOfWork.PushNotificationLogs.HasLiguillaAnnouncementBeenSentAsync(quiniela.Id, ct);
         if (alreadySent) return 0;
 
+        var (title, message) = announcement.Value;
+
         var payload = new PushNotificationPayload(
-            Title: "🏆 ¡Llegó la Liguilla: Pick'em ya disponible!",
-            Message: $"¡Concluyó la fase regular! Ya puedes armar tu bracket en Pick'em Liguilla para {quiniela.Name}. ¡Haz tus pronósticos y gana la gloria!",
+            Title: title,
+            Message: message,
             Url: "/liguilla",
             Data: new { type = "liguilla_opened", quinielaId = quiniela.Id }
         );
@@ -214,6 +237,30 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
             quiniela.Name, delivered);
 
         return 1;
+    }
+
+    /// <summary>
+    /// SPEC-027: textos del anuncio del lunes según el formato de eliminatoria de la liga.
+    /// Devuelve null cuando el formato no tiene Pick'em asociado.
+    /// </summary>
+    private static (string Title, string Message)? BuildAnnouncementCopy(string knockoutFormatCode, string quinielaName)
+    {
+        return knockoutFormatCode switch
+        {
+            KnockoutFormatCodes.FmfLiguilla => (
+                FmfLiguillaTitle,
+                string.Format(CultureInfo.InvariantCulture, FmfLiguillaMessageTemplate, quinielaName)),
+            KnockoutFormatCodes.NhlBestOf7 => (
+                PlayoffsTitle,
+                string.Format(CultureInfo.InvariantCulture, PlayoffsMessageTemplate, quinielaName)),
+            KnockoutFormatCodes.NflReseededSingleGame => (
+                PlayoffsTitle,
+                string.Format(CultureInfo.InvariantCulture, PlayoffsMessageTemplate, quinielaName)),
+            KnockoutFormatCodes.UefaTwoLeg => (
+                OctavosDeFinalTitle,
+                string.Format(CultureInfo.InvariantCulture, OctavosDeFinalMessageTemplate, quinielaName)),
+            _ => null
+        };
     }
 
     private async Task<int> ProcessIncompletePicksReminderAsync(

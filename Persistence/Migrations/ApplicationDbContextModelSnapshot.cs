@@ -655,6 +655,10 @@ namespace Persistence.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
 
+                    b.Property<string>("KnockoutFormatCode")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<DateTime?>("LastModified")
                         .HasColumnType("timestamp without time zone");
 
@@ -784,6 +788,56 @@ namespace Persistence.Migrations
                     b.ToTable("LiguillaBrackets", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.LiguillaBracketPick", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("BracketId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("Created")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastModified")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("LastModifiedBy")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("RoundCode")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int>("Slot")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TeamId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BracketId", "RoundCode", "Slot")
+                        .IsUnique();
+
+                    b.HasIndex("BracketId", "RoundCode", "TeamId")
+                        .IsUnique();
+
+                    b.ToTable("LiguillaBracketPicks", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.LiguillaNode", b =>
                 {
                     b.Property<int>("Id")
@@ -795,12 +849,20 @@ namespace Persistence.Migrations
                     b.Property<bool>("Active")
                         .HasColumnType("boolean");
 
+                    b.Property<string>("Conference")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)");
+
                     b.Property<DateTime>("Created")
                         .HasColumnType("timestamp without time zone");
 
                     b.Property<string>("CreatedBy")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<string>("EspnEventGroupKey")
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
 
                     b.Property<bool>("IsResolved")
                         .HasColumnType("boolean");
@@ -2497,6 +2559,17 @@ namespace Persistence.Migrations
                     b.Navigation("Quiniela");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("Domain.Entities.LiguillaBracketPick", b =>
+                {
+                    b.HasOne("Domain.Entities.LiguillaBracket", "Bracket")
+                        .WithMany()
+                        .HasForeignKey("BracketId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Bracket");
                 });
 
             modelBuilder.Entity("Domain.Entities.LiguillaNode", b =>

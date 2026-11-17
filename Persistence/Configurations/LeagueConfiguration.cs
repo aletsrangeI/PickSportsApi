@@ -18,6 +18,7 @@ public class LeagueConfiguration : IEntityTypeConfiguration<League>
         builder.Property(l => l.WeeksCount).HasDefaultValue(17);
         builder.Property(l => l.WeekDurationDays).HasDefaultValue(7);
         builder.Property(l => l.SportKey).HasMaxLength(20).HasDefaultValue("soccer");
+        builder.Property(l => l.KnockoutFormatCode).HasMaxLength(40);
 
         builder.HasIndex(l => l.Code).IsUnique();
 

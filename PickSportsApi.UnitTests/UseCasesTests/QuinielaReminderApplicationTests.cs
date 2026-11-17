@@ -1,6 +1,7 @@
 using Common;
 using Domain.Entities;
 using DTO.Notifications;
+using FluentAssertions;
 using Interface.Persistence;
 using Interface.UseCases;
 using Moq;
@@ -12,11 +13,16 @@ namespace PickSportsApi.UnitTests.UseCasesTests;
 
 public class QuinielaReminderApplicationTests
 {
+    private const int LeagueId = 10;
+    private const int FmfLiguillaWeeksCount = 17;
+    private const string FmfLiguillaFormatCode = "FMF_LIGUILLA";
+
     private readonly Mock<IUnitOfWork> _mockUow = new();
     private readonly Mock<IWebPushNotificationService> _mockWebPush = new();
     private readonly Mock<IAppLogger<QuinielaReminderApplication>> _mockLogger = new();
 
     private readonly Mock<IQuinielaRepository> _mockQuinielas = new();
+    private readonly Mock<ILeagueRepository> _mockLeagues = new();
     private readonly Mock<ISeasonRepository> _mockSeasons = new();
     private readonly Mock<IWeekRepository> _mockWeeks = new();
     private readonly Mock<IMatchRepository> _mockMatches = new();
@@ -27,12 +33,41 @@ public class QuinielaReminderApplicationTests
     public QuinielaReminderApplicationTests()
     {
         _mockUow.Setup(u => u.Quinielas).Returns(_mockQuinielas.Object);
+        _mockUow.Setup(u => u.Leagues).Returns(_mockLeagues.Object);
         _mockUow.Setup(u => u.Seasons).Returns(_mockSeasons.Object);
         _mockUow.Setup(u => u.Weeks).Returns(_mockWeeks.Object);
         _mockUow.Setup(u => u.Matches).Returns(_mockMatches.Object);
         _mockUow.Setup(u => u.QuinielaMembers).Returns(_mockMembers.Object);
         _mockUow.Setup(u => u.Picks).Returns(_mockPicks.Object);
         _mockUow.Setup(u => u.PushNotificationLogs).Returns(_mockLogs.Object);
+
+        // SPEC-027: fixture por defecto de la liga de la quiniela (Liga MX, Liguilla, 17 jornadas regulares)
+        _mockLeagues.Setup(l => l.GetAsync(LeagueId))
+            .ReturnsAsync(new League { Id = LeagueId, KnockoutFormatCode = FmfLiguillaFormatCode, WeeksCount = FmfLiguillaWeeksCount });
+    }
+
+    private void ArrangeFinishedRegularSeasonForLeague(string? knockoutFormatCode, int weeksCount = FmfLiguillaWeeksCount)
+    {
+        var quiniela = new Quiniela { Id = 1, LeagueId = LeagueId, Name = "Quiniela Amigos", Active = true };
+        var season = new Season { Id = 5, LeagueId = LeagueId, Active = true };
+        var weeks = Enumerable.Range(1, weeksCount).Select(i => new Week
+        {
+            Id = 100 + i,
+            SeasonId = 5,
+            WeekNumber = i,
+            Status = "SCORED",
+            Active = true
+        }).ToList();
+
+        _mockQuinielas.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(weeks);
+        _mockLeagues.Setup(l => l.GetAsync(LeagueId)).ReturnsAsync(new League
+        {
+            Id = LeagueId,
+            KnockoutFormatCode = knockoutFormatCode,
+            WeeksCount = weeksCount
+        });
     }
 
     [Fact]
@@ -451,5 +486,160 @@ public class QuinielaReminderApplicationTests
             log.NotificationType == "LIGUILLA_ANNOUNCED" &&
             log.QuinielaId == 1)),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_LigaFmfLiguilla_ShouldSendExactLigaMxCopy()
+    {
+        // ARRANGE: Lunes 13:00 CST con la fase regular de Liga MX ya calificada
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague("FMF_LIGUILLA");
+
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(4);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT: el copy de Liga MX no cambia ni un carácter
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            1,
+            It.Is<PushNotificationPayload>(p =>
+                p.Title == "🏆 ¡Llegó la Liguilla: Pick'em ya disponible!" &&
+                p.Message == "¡Concluyó la fase regular! Ya puedes armar tu bracket en Pick'em Liguilla para Quiniela Amigos. ¡Haz tus pronósticos y gana la gloria!"),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_LigaNhlBestOf7_ShouldAnnouncePlayoffs()
+    {
+        // ARRANGE: Lunes 13:00 CST con la temporada regular ya calificada en una liga de playoffs NHL
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague("NHL_BEST_OF_7");
+
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(4);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        var count = await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT
+        count.Should().Be(1);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            1,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("Playoffs") && p.Url == "/liguilla"),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.NotificationType == "LIGUILLA_ANNOUNCED")),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_LigaNflReseededSingleGame_ShouldAnnouncePlayoffs()
+    {
+        // ARRANGE: Lunes 13:00 CST con la temporada regular ya calificada en una liga de playoffs NFL
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague("NFL_RESEEDED_SINGLE_GAME");
+
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(4);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        var count = await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT
+        count.Should().Be(1);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            1,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("Playoffs") && p.Message.Contains("temporada regular")),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.NotificationType == "LIGUILLA_ANNOUNCED")),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_LigaUefaTwoLeg_ShouldAnnounceOctavosDeFinal()
+    {
+        // ARRANGE: Lunes 13:00 CST con la fase regular ya calificada en una liga de eliminatoria a dos vueltas
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague("UEFA_TWO_LEG");
+
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(4);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        var count = await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT
+        count.Should().Be(1);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            1,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("Octavos de Final") && p.Url == "/liguilla"),
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.NotificationType == "LIGUILLA_ANNOUNCED")),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_LigaSinFormatoDeEliminatoria_ShouldNotAnnounceAnything()
+    {
+        // ARRANGE: Lunes 13:00 CST, fase regular terminada, pero la liga no tiene formato de Pick'em
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague(null);
+
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(4);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        var count = await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT
+        count.Should().Be(0);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(It.IsAny<int>(), It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.NotificationType == "LIGUILLA_ANNOUNCED")), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_WhenLiguillaAnnouncementAlreadySent_ShouldNotSendDuplicate()
+    {
+        // ARRANGE: Lunes 13:00 CST, fase regular terminada, pero el anuncio ya se envió antes
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague("FMF_LIGUILLA");
+
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+
+        // ACT
+        var count = await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // ASSERT
+        count.Should().Be(0);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(It.IsAny<int>(), It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockLogs.Verify(l => l.InsertAsync(It.IsAny<PushNotificationLog>()), Times.Never);
     }
 }

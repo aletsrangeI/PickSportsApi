@@ -1,4 +1,4 @@
-namespace Interface.UseCases.Knockout;
+﻿namespace Interface.UseCases.Knockout;
 
 /// <summary>Convierte el JSON del scoreboard de ESPN en cruces normalizados. Un parser por familia de respuesta.</summary>
 public interface IEspnKnockoutParser
@@ -9,6 +9,10 @@ public interface IEspnKnockoutParser
     /// <summary>Un cruce por serie/partido de eliminatoria; ignora eventos de temporada regular. Nunca lanza por JSON inesperado.</summary>
     IReadOnlyList<EspnKnockoutTie> ParseScoreboard(string json, string formatCode);
 
-    /// <summary>NFL: <c>playoffSeed</c> por EspnTeamId desde standings (solo siembras 1..7).</summary>
-    IReadOnlyDictionary<string, int> ParseNflPlayoffSeeds(string standingsJson);
+    /// <summary>NFL: <c>playoffSeed</c> y conferencia por EspnTeamId desde standings (solo siembras 1..7).</summary>
+    IReadOnlyDictionary<string, NflPlayoffSeed> ParseNflPlayoffSeeds(string standingsJson);
 }
+
+/// <summary>Siembra de playoffs NFL de un equipo: conferencia ("afc"/"nfc") y seed 1..7.</summary>
+public record NflPlayoffSeed(string Conference, int Seed);
+

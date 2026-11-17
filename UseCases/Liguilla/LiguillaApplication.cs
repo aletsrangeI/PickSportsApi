@@ -2,17 +2,26 @@ using Domain.Entities;
 using DTO.Liguilla;
 using Interface.Persistence;
 using Interface.UseCases;
+using Interface.UseCases.Knockout;
+using UseCases.Liguilla.Strategies;
 using UseCases.Scoring;
 
 namespace UseCases.Liguilla;
 
 public class LiguillaApplication : ILiguillaApplication
 {
-    private readonly IUnitOfWork _unitOfWork;
+    private const string HiddenStatus = "HIDDEN";
+    private const int UnseededValue = 0;
+    private const string NotMemberMessage = "No perteneces a esta quiniela.";
+    private const string NoStrategyMessage = "La liga de la quiniela no tiene un formato de eliminatoria configurado.";
 
-    public LiguillaApplication(IUnitOfWork unitOfWork)
+    private readonly IUnitOfWork _unitOfWork;
+    private readonly IKnockoutStrategyResolver _strategyResolver;
+
+    public LiguillaApplication(IUnitOfWork unitOfWork, IKnockoutStrategyResolver strategyResolver)
     {
         _unitOfWork = unitOfWork;
+        _strategyResolver = strategyResolver;
     }
 
     public async Task<LiguillaOverviewDto> GetOverviewAsync(int quinielaId, int userId, bool isAdmin, CancellationToken ct = default)
@@ -24,68 +33,76 @@ public class LiguillaApplication : ILiguillaApplication
         // Obtener la temporada activa de la liga
         if (!quiniela.LeagueId.HasValue)
         {
-            return new LiguillaOverviewDto { IsAvailable = false, Status = "HIDDEN" };
+            return new LiguillaOverviewDto { IsAvailable = false, Status = HiddenStatus };
+        }
+
+        var (league, strategy) = await ResolveStrategyAsync(quiniela);
+        if (league == null || strategy == null)
+        {
+            return new LiguillaOverviewDto { IsAvailable = false, Status = HiddenStatus };
         }
 
         var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
         if (seasonId == null)
         {
-            return new LiguillaOverviewDto { IsAvailable = false, Status = "HIDDEN" };
+            return new LiguillaOverviewDto { IsAvailable = false, Status = HiddenStatus };
         }
 
         // 1. Verificación de Stealth Gating:
-        // Todas las jornadas regulares (<= 17) deben estar SCORED
+        // Todas las jornadas regulares (WeekNumber <= League.WeeksCount) deben estar SCORED
         var weeks = await _unitOfWork.Weeks.GetBySeasonIdAsync(seasonId.Value);
-        var regularWeeks = weeks.Where(w => w.WeekNumber <= 17).ToList();
+        var regularWeeks = weeks.Where(w => w.WeekNumber <= league.WeeksCount).ToList();
         bool isRegularSeasonFinished = regularWeeks.Count > 0 && regularWeeks.All(w => string.Equals(w.Status, "SCORED", StringComparison.OrdinalIgnoreCase));
 
-        // Obtener los nodos oficiales de Liguilla
+        // Obtener los nodos oficiales de la eliminatoria
         var nodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct);
-        var qfNodes = nodes.Where(n => n.NodeNumber >= 1 && n.NodeNumber <= 4).ToList();
-        bool isPlayInFinished = qfNodes.Count == 4 && qfNodes.All(n => n.TeamAId.HasValue && n.TeamBId.HasValue);
+        var firstRoundNodes = GetFirstRoundNodes(strategy, nodes);
+        bool isFieldReady = strategy.IsFieldReady(nodes, isRegularSeasonFinished);
+        bool isFieldPopulated = isRegularSeasonFinished ? isFieldReady : strategy.IsFieldReady(nodes, true);
 
-        // Stealth Gating estricto: Si el torneo regular no ha concluido (J17 SCORED) o el Play-In no está listo,
+        // Stealth Gating estricto: si la fase regular no ha concluido o el campo no está listo,
         // el módulo permanece estrictamente oculto e inaccesible para usuarios comunes.
-        if (!isAdmin && (!isRegularSeasonFinished || !isPlayInFinished))
+        if (!isAdmin && !isFieldReady)
         {
             return new LiguillaOverviewDto
             {
                 IsAvailable = false,
-                Status = "HIDDEN"
+                Status = HiddenStatus
             };
         }
 
         // Determinar status operativo
-        DateTime? lockDeadlineUtc = qfNodes.FirstOrDefault()?.KickoffUtc;
+        DateTime? lockDeadlineUtc = GetLockDeadline(firstRoundNodes);
         bool isLocked = lockDeadlineUtc.HasValue && DateTime.UtcNow >= lockDeadlineUtc.Value;
-        bool isFinished = nodes.Any(n => n.NodeNumber == 7 && n.IsResolved);
+        string finalRoundCode = strategy.Rounds[^1].Code;
+        bool isFinished = nodes.Any(n => string.Equals(n.Round, finalRoundCode, StringComparison.OrdinalIgnoreCase) && n.IsResolved);
 
         string status;
         if (isFinished)
             status = "FINISHED";
         else if (isLocked)
             status = "LOCKED_IN_PROGRESS";
-        else if (isPlayInFinished)
+        else if (isFieldPopulated)
             status = "OPEN_FOR_PICKS";
         else if (!isRegularSeasonFinished)
-            status = isAdmin ? "ADMIN_PREVIEW_HIDDEN" : "HIDDEN";
+            status = isAdmin ? "ADMIN_PREVIEW_HIDDEN" : HiddenStatus;
         else
             status = "WAITING_PLAY_IN";
 
-        // Mapear equipos clasificados con su siembra (1 al 8)
+        // Mapear equipos clasificados con su siembra
         var qualifiedTeams = new List<LiguillaTeamDto>();
-        foreach (var node in qfNodes)
+        foreach (var node in firstRoundNodes)
         {
-            if (node.TeamA != null && node.SeedA.HasValue)
+            if (node.TeamA != null)
             {
-                qualifiedTeams.Add(MapTeam(node.TeamA, node.SeedA.Value));
+                qualifiedTeams.Add(MapTeam(node.TeamA, node.SeedA ?? UnseededValue));
             }
-            if (node.TeamB != null && node.SeedB.HasValue)
+            if (node.TeamB != null)
             {
-                qualifiedTeams.Add(MapTeam(node.TeamB, node.SeedB.Value));
+                qualifiedTeams.Add(MapTeam(node.TeamB, node.SeedB ?? UnseededValue));
             }
         }
-        qualifiedTeams = qualifiedTeams.OrderBy(t => t.Seed).ToList();
+        qualifiedTeams = qualifiedTeams.OrderBy(t => t.Seed).ThenBy(t => t.Name, StringComparer.Ordinal).ToList();
 
         // Mapear nodos
         var nodeDtos = nodes.Select(MapNode).ToList();
@@ -102,12 +119,15 @@ public class LiguillaApplication : ILiguillaApplication
             }
             var user = await _unitOfWork.Users.GetAsync(userId);
             var member = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
-            userBracketDto = MapBracketDetail(userBracketEntity, user, member?.Alias, nodes);
+            var picks = await LoadPicksAsync(userBracketEntity, strategy, ct);
+            userBracketDto = MapBracketDetail(userBracketEntity, user, member?.Alias, nodes, strategy, picks);
         }
 
         return new LiguillaOverviewDto
         {
             IsAvailable = true,
+            FormatCode = strategy.FormatCode,
+            Rounds = strategy.Rounds.Select(MapRound).ToList(),
             Status = status,
             LockDeadlineUtc = lockDeadlineUtc,
             QualifiedTeams = qualifiedTeams,
@@ -128,17 +148,47 @@ public class LiguillaApplication : ILiguillaApplication
         }
 
         var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
-        var seasonId = quiniela != null ? await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela) : null;
+        if (quiniela == null) return null;
+
+        var (_, strategy) = await ResolveStrategyAsync(quiniela);
+        if (strategy == null) return null;
+
+        var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
         var nodes = seasonId.HasValue ? await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct) : new List<LiguillaNode>();
 
         var user = await _unitOfWork.Users.GetAsync(userId);
         var member = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
+        var picks = await LoadPicksAsync(bracket, strategy, ct);
 
-        return MapBracketDetail(bracket, user, member?.Alias, nodes);
+        return MapBracketDetail(bracket, user, member?.Alias, nodes, strategy, picks);
     }
 
-    public async Task<LiguillaBracketDetailDto> SubmitBracketAsync(int quinielaId, int userId, SubmitLiguillaBracketDto dto, CancellationToken ct = default)
+    public Task<LiguillaBracketDetailDto> SubmitBracketAsync(int quinielaId, int userId, SubmitLiguillaBracketDto dto, CancellationToken ct = default)
     {
+        return SubmitInternalAsync(quinielaId, userId, strategy => ToPicksByRound(strategy, dto), ct);
+    }
+
+    /// <summary>Registra los picks genéricos por ronda (cualquier formato). El DTO legado solo cubre FMF_LIGUILLA.</summary>
+    public Task<LiguillaBracketDetailDto> SubmitPicksAsync(
+        int quinielaId,
+        int userId,
+        IReadOnlyDictionary<string, IReadOnlyList<int>> picksByRound,
+        CancellationToken ct = default)
+    {
+        return SubmitInternalAsync(quinielaId, userId, _ => picksByRound, ct);
+    }
+
+    private async Task<LiguillaBracketDetailDto> SubmitInternalAsync(
+        int quinielaId,
+        int userId,
+        Func<IKnockoutFormatStrategy, IReadOnlyDictionary<string, IReadOnlyList<int>>> picksFactory,
+        CancellationToken ct)
+    {
+        // El repositorio solo devuelve membresías activas.
+        var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
+        if (membership == null)
+            throw new InvalidOperationException(NotMemberMessage);
+
         var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
         if (quiniela == null)
             throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
@@ -146,40 +196,26 @@ public class LiguillaApplication : ILiguillaApplication
         if (!quiniela.LeagueId.HasValue)
             throw new InvalidOperationException("La quiniela no tiene una liga asignada.");
 
+        var (_, strategy) = await ResolveStrategyAsync(quiniela);
+        if (strategy == null)
+            throw new InvalidOperationException(NoStrategyMessage);
+
         var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
         if (seasonId == null)
             throw new InvalidOperationException("No hay una temporada vigente configurada.");
 
         var nodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct);
-        var qfNodes = nodes.Where(n => n.NodeNumber >= 1 && n.NodeNumber <= 4).ToList();
 
-        // 1. Validar fecha límite de bloqueo (Kickoff del primer partido de cuartos)
-        DateTime? lockDeadlineUtc = qfNodes.FirstOrDefault()?.KickoffUtc;
+        // 1. Validar fecha límite de bloqueo (Kickoff del primer partido de la primera ronda)
+        DateTime? lockDeadlineUtc = GetLockDeadline(GetFirstRoundNodes(strategy, nodes));
         if (lockDeadlineUtc.HasValue && DateTime.UtcNow >= lockDeadlineUtc.Value)
         {
             throw new InvalidOperationException("El tiempo límite para registrar pronósticos de Liguilla ha expirado.");
         }
 
-        // 2. Validar coherencia lógica del árbol
-        var qfWinners = new HashSet<int>
-        {
-            dto.QfWinner1TeamId,
-            dto.QfWinner2TeamId,
-            dto.QfWinner3TeamId,
-            dto.QfWinner4TeamId
-        };
-
-        if (qfWinners.Count != 4)
-            throw new ArgumentException("Debes elegir 4 ganadores distintos en Cuartos de Final.");
-
-        if (!qfWinners.Contains(dto.SfWinner1TeamId) || !qfWinners.Contains(dto.SfWinner2TeamId))
-            throw new ArgumentException("Los finalistas de Semifinales deben haber sido seleccionados como ganadores en Cuartos de Final.");
-
-        if (dto.SfWinner1TeamId == dto.SfWinner2TeamId)
-            throw new ArgumentException("Los dos finalistas deben ser equipos distintos.");
-
-        if (dto.ChampionTeamId != dto.SfWinner1TeamId && dto.ChampionTeamId != dto.SfWinner2TeamId)
-            throw new ArgumentException("El Campeón debe ser uno de los dos equipos finalistas seleccionados.");
+        // 2. Validar coherencia lógica del árbol (la regla es de la estrategia)
+        var picksByRound = picksFactory(strategy);
+        strategy.ValidatePicks(nodes, picksByRound);
 
         // 3. Crear o actualizar el bracket
         var existing = await _unitOfWork.Liguilla.GetBracketAsync(quinielaId, userId, ct);
@@ -188,6 +224,7 @@ public class LiguillaApplication : ILiguillaApplication
             throw new InvalidOperationException("Tu pronóstico ya ha sido bloqueado y no puede modificarse.");
         }
 
+        bool isFmf = strategy.FormatCode == FmfLiguillaStrategy.Code;
         if (existing == null)
         {
             existing = new LiguillaBracket
@@ -196,41 +233,32 @@ public class LiguillaApplication : ILiguillaApplication
                 UserId = userId,
                 IsLocked = true,
                 SubmittedAtUtc = DateTime.UtcNow,
-                QfWinner1TeamId = dto.QfWinner1TeamId,
-                QfWinner2TeamId = dto.QfWinner2TeamId,
-                QfWinner3TeamId = dto.QfWinner3TeamId,
-                QfWinner4TeamId = dto.QfWinner4TeamId,
-                SfWinner1TeamId = dto.SfWinner1TeamId,
-                SfWinner2TeamId = dto.SfWinner2TeamId,
-                ChampionTeamId = dto.ChampionTeamId,
                 Created = DateTime.UtcNow,
                 CreatedBy = userId.ToString(),
                 Active = true
             };
+            if (isFmf)
+                ApplyLegacyColumns(existing, picksByRound);
             await _unitOfWork.Liguilla.AddBracketAsync(existing, ct);
         }
         else
         {
             existing.IsLocked = true;
             existing.SubmittedAtUtc = DateTime.UtcNow;
-            existing.QfWinner1TeamId = dto.QfWinner1TeamId;
-            existing.QfWinner2TeamId = dto.QfWinner2TeamId;
-            existing.QfWinner3TeamId = dto.QfWinner3TeamId;
-            existing.QfWinner4TeamId = dto.QfWinner4TeamId;
-            existing.SfWinner1TeamId = dto.SfWinner1TeamId;
-            existing.SfWinner2TeamId = dto.SfWinner2TeamId;
-            existing.ChampionTeamId = dto.ChampionTeamId;
+            if (isFmf)
+                ApplyLegacyColumns(existing, picksByRound);
             existing.LastModified = DateTime.UtcNow;
             existing.LastModifiedBy = userId.ToString();
             await _unitOfWork.Liguilla.UpdateBracketAsync(existing, ct);
         }
 
+        await _unitOfWork.Liguilla.ReplacePicksAsync(existing.Id, BuildPickEntities(existing, picksByRound, userId), ct);
         await _unitOfWork.Save(ct);
 
         var user = await _unitOfWork.Users.GetAsync(userId);
         var member = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
 
-        return MapBracketDetail(existing, user, member?.Alias, nodes);
+        return MapBracketDetail(existing, user, member?.Alias, nodes, strategy, picksByRound);
     }
 
     public async Task<LiguillaStandingsDto> GetStandingsAsync(int quinielaId, CancellationToken ct = default)
@@ -241,62 +269,89 @@ public class LiguillaApplication : ILiguillaApplication
 
         var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
         var currentSeason = seasonId.HasValue ? await _unitOfWork.Seasons.GetAsync(seasonId.Value) : null;
+        string seasonName = currentSeason?.Name ?? "Liguilla";
+
+        var (_, strategy) = await ResolveStrategyAsync(quiniela);
+        if (strategy == null)
+        {
+            return new LiguillaStandingsDto
+            {
+                QuinielaId = quinielaId,
+                SeasonName = seasonName,
+                Standings = new List<LiguillaStandingItemDto>()
+            };
+        }
+
         var nodes = seasonId.HasValue ? await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct) : new List<LiguillaNode>();
 
         var brackets = await _unitOfWork.Liguilla.GetAllBracketsForQuinielaAsync(quinielaId, ct);
         var members = await _unitOfWork.QuinielaMembers.GetMembersAsync(quinielaId);
         var memberMap = members.ToDictionary(m => m.UserId, m => m);
 
-        var finalNode = nodes.FirstOrDefault(n => n.NodeNumber == 7);
+        string finalRoundCode = strategy.Rounds[^1].Code;
+        var finalNode = nodes.FirstOrDefault(n => string.Equals(n.Round, finalRoundCode, StringComparison.OrdinalIgnoreCase));
         bool finalResolved = finalNode != null && finalNode.IsResolved && finalNode.WinnerTeamId.HasValue;
 
         var evaluatedItems = new List<LiguillaStandingItemDto>();
+        var scoresByItem = new Dictionary<LiguillaStandingItemDto, KnockoutScore>(ReferenceEqualityComparer.Instance);
 
         foreach (var bracket in brackets)
         {
-            var (qfPts, sfPts, champPts, bonusPts, totalPts, _) = FmfLiguillaEngine.EvaluateBracket(bracket, nodes);
+            var picks = await LoadPicksAsync(bracket, strategy, ct);
+            var score = KnockoutScoringEngine.Evaluate(strategy, picks, nodes);
+            var (firstPts, middlePts, lastPts) = SplitPoints(strategy, score);
+            int totalPts = score.TotalPoints;
 
-            if (bracket.TotalScore != totalPts || bracket.QfPoints != qfPts || bracket.SfPoints != sfPts || bracket.ChampionPoints != champPts)
+            if (bracket.TotalScore != totalPts || bracket.QfPoints != firstPts || bracket.SfPoints != middlePts || bracket.ChampionPoints != lastPts)
             {
-                bracket.QfPoints = qfPts;
-                bracket.SfPoints = sfPts;
-                bracket.ChampionPoints = champPts;
-                bracket.BonusPoints = bonusPts;
+                bracket.QfPoints = firstPts;
+                bracket.SfPoints = middlePts;
+                bracket.ChampionPoints = lastPts;
+                bracket.BonusPoints = score.BonusPoints;
                 bracket.TotalScore = totalPts;
                 await _unitOfWork.Liguilla.UpdateBracketAsync(bracket, ct);
             }
 
             memberMap.TryGetValue(bracket.UserId, out var member);
-            bool champPickedCorrectly = finalResolved && bracket.ChampionTeamId == finalNode!.WinnerTeamId!.Value;
+            bool champPickedCorrectly = finalResolved
+                && picks.TryGetValue(finalRoundCode, out var championPicks)
+                && championPicks.Contains(finalNode!.WinnerTeamId!.Value);
 
-            evaluatedItems.Add(new LiguillaStandingItemDto
+            var item = new LiguillaStandingItemDto
             {
                 UserId = bracket.UserId,
                 Alias = member?.Alias ?? bracket.User?.Username ?? "Participante",
                 AvatarUrl = bracket.User?.AvatarUrl,
                 TotalPoints = totalPts,
-                QfPoints = qfPts,
-                SfPoints = sfPts,
-                ChampionPoints = champPts,
-                BonusPoints = bonusPts,
+                QfPoints = firstPts,
+                SfPoints = middlePts,
+                ChampionPoints = lastPts,
+                BonusPoints = score.BonusPoints,
                 ChampionPickedCorrectly = champPickedCorrectly,
                 SubmittedAtUtc = bracket.SubmittedAtUtc
-            });
+            };
+            evaluatedItems.Add(item);
+            scoresByItem[item] = score;
         }
 
         await _unitOfWork.Save(ct);
 
-        // Desempates en cascada de "El Pilón":
+        // Desempates en cascada:
         // 1. TotalPoints desc
         // 2. ChampionPickedCorrectly desc
-        // 3. SfPoints desc
-        // 4. QfPoints desc
-        // 5. SubmittedAtUtc asc
-        var sorted = evaluatedItems
+        // 3. Puntos de cada ronda, de la última intermedia hacia la primera (excluye la final)
+        // 4. SubmittedAtUtc asc
+        // En Liga MX (QF, SF, FINAL) equivale a SfPoints y luego QfPoints.
+        var tiebreakRounds = strategy.Rounds.Take(strategy.Rounds.Count - 1).Reverse().Select(r => r.Code).ToList();
+        var ordered = evaluatedItems
             .OrderByDescending(x => x.TotalPoints)
-            .ThenByDescending(x => x.ChampionPickedCorrectly)
-            .ThenByDescending(x => x.SfPoints)
-            .ThenByDescending(x => x.QfPoints)
+            .ThenByDescending(x => x.ChampionPickedCorrectly);
+        foreach (var roundCode in tiebreakRounds)
+        {
+            ordered = ordered.ThenByDescending(x => PointsOfRound(scoresByItem[x], roundCode));
+        }
+
+        var sorted = ordered
             .ThenBy(x => x.SubmittedAtUtc)
             .ToList();
 
@@ -308,13 +363,21 @@ public class LiguillaApplication : ILiguillaApplication
         return new LiguillaStandingsDto
         {
             QuinielaId = quinielaId,
-            SeasonName = currentSeason?.Name ?? "Liguilla",
+            SeasonName = seasonName,
             Standings = sorted
         };
     }
 
     public async Task<bool> ResolveNodeAsync(int quinielaId, ResolveLiguillaNodeRequestDto dto, CancellationToken ct = default)
     {
+        var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
+        if (quiniela == null)
+            throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
+
+        var (_, strategy) = await ResolveStrategyAsync(quiniela);
+        if (strategy == null)
+            throw new InvalidOperationException(NoStrategyMessage);
+
         var node = await _unitOfWork.Liguilla.GetNodeByIdAsync(dto.NodeId, ct);
         if (node == null)
             throw new KeyNotFoundException($"No se encontró el nodo con Id {dto.NodeId}.");
@@ -326,57 +389,20 @@ public class LiguillaApplication : ILiguillaApplication
 
         await _unitOfWork.Liguilla.UpdateNodeAsync(node, ct);
 
-        // Si se están resolviendo Cuartos de Final (1 al 4) y los 4 ya quedaron listos:
         var allNodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(node.SeasonId, ct);
-        var qfNodes = allNodes.Where(n => n.NodeNumber >= 1 && n.NodeNumber <= 4).ToList();
 
-        if (qfNodes.All(n => n.IsResolved && n.WinnerTeamId.HasValue))
+        // El listado puede traer otra instancia del mismo nodo: asegura que la estrategia vea el ganador recién guardado
+        var listed = allNodes.FirstOrDefault(n => n.Id == node.Id);
+        if (listed != null && !ReferenceEquals(listed, node))
         {
-            // Aplicar Art. 10 de la FMF para sembrar Semifinales (Nodos 5 y 6)
-            var qfWinnerSeeds = new List<TeamSeedInfo>();
-            foreach (var qf in qfNodes)
-            {
-                int winnerId = qf.WinnerTeamId!.Value;
-                int seed = (winnerId == qf.TeamAId && qf.SeedA.HasValue) ? qf.SeedA.Value
-                         : (winnerId == qf.TeamBId && qf.SeedB.HasValue) ? qf.SeedB.Value
-                         : 8;
-                qfWinnerSeeds.Add(new TeamSeedInfo(winnerId, seed));
-            }
-
-            var (semi1, semi2) = FmfLiguillaEngine.CalculateFmfReSeed(qfWinnerSeeds);
-
-            var sfNode1 = allNodes.FirstOrDefault(n => n.NodeNumber == 5);
-            if (sfNode1 != null)
-            {
-                sfNode1.TeamAId = semi1.TeamA.TeamId;
-                sfNode1.SeedA = semi1.TeamA.Seed;
-                sfNode1.TeamBId = semi1.TeamB.TeamId;
-                sfNode1.SeedB = semi1.TeamB.Seed;
-                await _unitOfWork.Liguilla.UpdateNodeAsync(sfNode1, ct);
-            }
-
-            var sfNode2 = allNodes.FirstOrDefault(n => n.NodeNumber == 6);
-            if (sfNode2 != null)
-            {
-                sfNode2.TeamAId = semi2.TeamA.TeamId;
-                sfNode2.SeedA = semi2.TeamA.Seed;
-                sfNode2.TeamBId = semi2.TeamB.TeamId;
-                sfNode2.SeedB = semi2.TeamB.Seed;
-                await _unitOfWork.Liguilla.UpdateNodeAsync(sfNode2, ct);
-            }
+            listed.WinnerTeamId = node.WinnerTeamId;
+            listed.IsResolved = node.IsResolved;
+            listed.ResolvedAtUtc = node.ResolvedAtUtc;
         }
 
-        // Si Semifinales ya están listas, sembrar la Gran Final (Nodo 7)
-        var sfNodes = allNodes.Where(n => n.NodeNumber == 5 || n.NodeNumber == 6).ToList();
-        if (sfNodes.Count == 2 && sfNodes.All(n => n.IsResolved && n.WinnerTeamId.HasValue))
+        foreach (var advanced in strategy.AdvanceWinners(allNodes))
         {
-            var finalNode = allNodes.FirstOrDefault(n => n.NodeNumber == 7);
-            if (finalNode != null)
-            {
-                finalNode.TeamAId = sfNodes[0].WinnerTeamId;
-                finalNode.TeamBId = sfNodes[1].WinnerTeamId;
-                await _unitOfWork.Liguilla.UpdateNodeAsync(finalNode, ct);
-            }
+            await _unitOfWork.Liguilla.UpdateNodeAsync(advanced, ct);
         }
 
         await _unitOfWork.Save(ct);
@@ -385,6 +411,138 @@ public class LiguillaApplication : ILiguillaApplication
         await GetStandingsAsync(quinielaId, ct);
         return true;
     }
+
+    private async Task<(League? League, IKnockoutFormatStrategy? Strategy)> ResolveStrategyAsync(Quiniela quiniela)
+    {
+        if (!quiniela.LeagueId.HasValue)
+            return (null, null);
+
+        var league = quiniela.League ?? await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value);
+        return league == null ? (null, null) : (league, _strategyResolver.For(league));
+    }
+
+    private static List<LiguillaNode> GetFirstRoundNodes(IKnockoutFormatStrategy strategy, IReadOnlyList<LiguillaNode> nodes) =>
+        nodes.Where(n => string.Equals(n.Round, strategy.FirstPickableRoundCode, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private static DateTime? GetLockDeadline(IReadOnlyList<LiguillaNode> firstRoundNodes) =>
+        firstRoundNodes.Where(n => n.KickoffUtc.HasValue).Select(n => n.KickoffUtc).Min();
+
+    /// <summary>Picks por ronda del bracket: genéricos si existen; si no, y solo en FMF, derivados de las columnas legadas.</summary>
+    private async Task<Dictionary<string, IReadOnlyList<int>>> LoadPicksAsync(
+        LiguillaBracket bracket,
+        IKnockoutFormatStrategy strategy,
+        CancellationToken ct)
+    {
+        var stored = await _unitOfWork.Liguilla.GetPicksByBracketAsync(bracket.Id, ct);
+        if (stored is { Count: > 0 })
+        {
+            return stored
+                .GroupBy(p => p.RoundCode)
+                .ToDictionary(
+                    g => g.Key,
+                    g => (IReadOnlyList<int>)g.OrderBy(p => p.Slot).Select(p => p.TeamId).ToList());
+        }
+
+        return strategy.FormatCode == FmfLiguillaStrategy.Code
+            ? FromLegacyColumns(bracket)
+            : new Dictionary<string, IReadOnlyList<int>>();
+    }
+
+    private static Dictionary<string, IReadOnlyList<int>> FromLegacyColumns(LiguillaBracket bracket) => new()
+    {
+        [FmfLiguillaStrategy.QuarterFinalRound] = new List<int>
+        {
+            bracket.QfWinner1TeamId, bracket.QfWinner2TeamId, bracket.QfWinner3TeamId, bracket.QfWinner4TeamId
+        },
+        [FmfLiguillaStrategy.SemiFinalRound] = new List<int> { bracket.SfWinner1TeamId, bracket.SfWinner2TeamId },
+        [FmfLiguillaStrategy.FinalRound] = new List<int> { bracket.ChampionTeamId }
+    };
+
+    private static IReadOnlyDictionary<string, IReadOnlyList<int>> ToPicksByRound(IKnockoutFormatStrategy strategy, SubmitLiguillaBracketDto dto)
+    {
+        if (strategy.FormatCode != FmfLiguillaStrategy.Code)
+            throw new InvalidOperationException($"El formato {strategy.FormatCode} requiere pronósticos por ronda; el DTO legado solo aplica a {FmfLiguillaStrategy.Code}.");
+
+        return new Dictionary<string, IReadOnlyList<int>>
+        {
+            [FmfLiguillaStrategy.QuarterFinalRound] = new List<int>
+            {
+                dto.QfWinner1TeamId, dto.QfWinner2TeamId, dto.QfWinner3TeamId, dto.QfWinner4TeamId
+            },
+            [FmfLiguillaStrategy.SemiFinalRound] = new List<int> { dto.SfWinner1TeamId, dto.SfWinner2TeamId },
+            [FmfLiguillaStrategy.FinalRound] = new List<int> { dto.ChampionTeamId }
+        };
+    }
+
+    private static void ApplyLegacyColumns(LiguillaBracket bracket, IReadOnlyDictionary<string, IReadOnlyList<int>> picksByRound)
+    {
+        var qf = picksByRound[FmfLiguillaStrategy.QuarterFinalRound];
+        var sf = picksByRound[FmfLiguillaStrategy.SemiFinalRound];
+        var final = picksByRound[FmfLiguillaStrategy.FinalRound];
+
+        bracket.QfWinner1TeamId = qf[0];
+        bracket.QfWinner2TeamId = qf[1];
+        bracket.QfWinner3TeamId = qf[2];
+        bracket.QfWinner4TeamId = qf[3];
+        bracket.SfWinner1TeamId = sf[0];
+        bracket.SfWinner2TeamId = sf[1];
+        bracket.ChampionTeamId = final[0];
+    }
+
+    private static List<LiguillaBracketPick> BuildPickEntities(
+        LiguillaBracket bracket,
+        IReadOnlyDictionary<string, IReadOnlyList<int>> picksByRound,
+        int userId)
+    {
+        var entities = new List<LiguillaBracketPick>();
+        foreach (var (roundCode, teamIds) in picksByRound)
+        {
+            for (int i = 0; i < teamIds.Count; i++)
+            {
+                entities.Add(new LiguillaBracketPick
+                {
+                    BracketId = bracket.Id,
+                    Bracket = bracket,
+                    RoundCode = roundCode,
+                    Slot = i + 1,
+                    TeamId = teamIds[i],
+                    Created = DateTime.UtcNow,
+                    CreatedBy = userId.ToString(),
+                    Active = true
+                });
+            }
+        }
+
+        return entities;
+    }
+
+    /// <summary>Puntos de la primera ronda, de las intermedias y de la última (campeón): el desglose que expone el DTO.</summary>
+    private static (int First, int Middle, int Last) SplitPoints(IKnockoutFormatStrategy strategy, KnockoutScore score)
+    {
+        string firstCode = strategy.Rounds[0].Code;
+        string lastCode = strategy.Rounds[^1].Code;
+        int first = score.PointsByRound.TryGetValue(firstCode, out var f) ? f : 0;
+        int last = score.PointsByRound.TryGetValue(lastCode, out var l) ? l : 0;
+        int middle = score.PointsByRound
+            .Where(kv => kv.Key != firstCode && kv.Key != lastCode)
+            .Sum(kv => kv.Value);
+        return (first, middle, last);
+    }
+
+    private static int PointsOfRound(KnockoutScore score, string roundCode) =>
+        score.PointsByRound.TryGetValue(roundCode, out var points) ? points : 0;
+
+    private static int PickAt(IReadOnlyDictionary<string, IReadOnlyList<int>> picks, string roundCode, int index) =>
+        picks.TryGetValue(roundCode, out var list) && index < list.Count ? list[index] : 0;
+
+    private static LiguillaRoundDto MapRound(KnockoutRound round) => new()
+    {
+        Code = round.Code,
+        Order = round.Order,
+        WinnersToPick = round.WinnersToPick,
+        PointsPerHit = round.PointsPerHit,
+        NodeCount = round.NodeCount
+    };
 
     private static LiguillaTeamDto MapTeam(Team team, int seed) => new()
     {
@@ -402,9 +560,9 @@ public class LiguillaApplication : ILiguillaApplication
         Id = node.Id,
         Round = node.Round,
         NodeNumber = node.NodeNumber,
-        TeamA = node.TeamA != null && node.SeedA.HasValue ? MapTeam(node.TeamA, node.SeedA.Value) : null,
-        TeamB = node.TeamB != null && node.SeedB.HasValue ? MapTeam(node.TeamB, node.SeedB.Value) : null,
-        WinnerTeam = node.WinnerTeam != null ? MapTeam(node.WinnerTeam, 0) : null,
+        TeamA = node.TeamA != null ? MapTeam(node.TeamA, node.SeedA ?? UnseededValue) : null,
+        TeamB = node.TeamB != null ? MapTeam(node.TeamB, node.SeedB ?? UnseededValue) : null,
+        WinnerTeam = node.WinnerTeam != null ? MapTeam(node.WinnerTeam, UnseededValue) : null,
         IsResolved = node.IsResolved,
         ResolvedAtUtc = node.ResolvedAtUtc,
         KickoffUtc = node.KickoffUtc
@@ -414,11 +572,15 @@ public class LiguillaApplication : ILiguillaApplication
         LiguillaBracket bracket,
         User? user,
         string? alias,
-        IReadOnlyList<LiguillaNode> nodes)
+        IReadOnlyList<LiguillaNode> nodes,
+        IKnockoutFormatStrategy strategy,
+        IReadOnlyDictionary<string, IReadOnlyList<int>> picks)
     {
-        var (qfPts, sfPts, champPts, bonusPts, totalPts, shattered) = FmfLiguillaEngine.EvaluateBracket(bracket, nodes);
+        var score = KnockoutScoringEngine.Evaluate(strategy, picks, nodes);
+        var (firstPts, middlePts, lastPts) = SplitPoints(strategy, score);
+        bool isFmf = strategy.FormatCode == FmfLiguillaStrategy.Code;
 
-        return new LiguillaBracketDetailDto
+        var dto = new LiguillaBracketDetailDto
         {
             Id = bracket.Id,
             UserId = bracket.UserId,
@@ -427,20 +589,28 @@ public class LiguillaApplication : ILiguillaApplication
             AvatarUrl = user?.AvatarUrl,
             IsLocked = bracket.IsLocked,
             SubmittedAtUtc = bracket.SubmittedAtUtc,
-            TotalScore = totalPts,
-            QfWinner1TeamId = bracket.QfWinner1TeamId,
-            QfWinner2TeamId = bracket.QfWinner2TeamId,
-            QfWinner3TeamId = bracket.QfWinner3TeamId,
-            QfWinner4TeamId = bracket.QfWinner4TeamId,
-            SfWinner1TeamId = bracket.SfWinner1TeamId,
-            SfWinner2TeamId = bracket.SfWinner2TeamId,
-            ChampionTeamId = bracket.ChampionTeamId,
-            QfPoints = qfPts,
-            SfPoints = sfPts,
-            ChampionPoints = champPts,
-            BonusPoints = bonusPts,
-            ShatteredTeamIds = shattered
+            TotalScore = score.TotalPoints,
+            QfPoints = firstPts,
+            SfPoints = middlePts,
+            ChampionPoints = lastPts,
+            BonusPoints = score.BonusPoints,
+            ShatteredTeamIds = score.ShatteredTeamIds.ToList(),
+            PicksByRound = picks.ToDictionary(kv => kv.Key, kv => kv.Value.ToList())
         };
+
+        // Campos legados del frontend: solo tienen sentido en la Liguilla FMF
+        if (isFmf)
+        {
+            dto.QfWinner1TeamId = PickAt(picks, FmfLiguillaStrategy.QuarterFinalRound, 0);
+            dto.QfWinner2TeamId = PickAt(picks, FmfLiguillaStrategy.QuarterFinalRound, 1);
+            dto.QfWinner3TeamId = PickAt(picks, FmfLiguillaStrategy.QuarterFinalRound, 2);
+            dto.QfWinner4TeamId = PickAt(picks, FmfLiguillaStrategy.QuarterFinalRound, 3);
+            dto.SfWinner1TeamId = PickAt(picks, FmfLiguillaStrategy.SemiFinalRound, 0);
+            dto.SfWinner2TeamId = PickAt(picks, FmfLiguillaStrategy.SemiFinalRound, 1);
+            dto.ChampionTeamId = PickAt(picks, FmfLiguillaStrategy.FinalRound, 0);
+        }
+
+        return dto;
     }
 
     public async Task<bool> SeedSimulationNodesAsync(int quinielaId, CancellationToken ct = default)
@@ -451,6 +621,10 @@ public class LiguillaApplication : ILiguillaApplication
 
         if (!quiniela.LeagueId.HasValue)
             throw new InvalidOperationException("La quiniela no tiene una liga asignada.");
+
+        var (_, strategy) = await ResolveStrategyAsync(quiniela);
+        if (strategy == null || strategy.FormatCode != FmfLiguillaStrategy.Code)
+            throw new InvalidOperationException("La simulación de siembra solo está disponible para el formato FMF_LIGUILLA.");
 
         var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
         if (seasonId == null)

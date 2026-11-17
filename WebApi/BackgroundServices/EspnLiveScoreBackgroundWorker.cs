@@ -3,6 +3,7 @@ using Domain.Entities;
 using DTO.Notifications;
 using Interface.Persistence;
 using Interface.UseCases;
+using Interface.UseCases.Knockout;
 using UseCases.Scoring;
 
 namespace WebApi.BackgroundServices;
@@ -16,8 +17,16 @@ namespace WebApi.BackgroundServices;
 /// </summary>
 public class EspnLiveScoreBackgroundWorker : BackgroundService
 {
+    /// <summary>Separación mínima entre intentos de sincronizar las eliminatorias de una misma liga.</summary>
+    public static readonly TimeSpan KnockoutSyncInterval = TimeSpan.FromMinutes(30);
+
+    /// <summary>Tope de espera por liga para que un ESPN lento no retrase los marcadores en vivo.</summary>
+    private static readonly TimeSpan KnockoutSyncTimeout = TimeSpan.FromMinutes(2);
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IAppLogger<EspnLiveScoreBackgroundWorker> _logger;
+    private readonly object _knockoutSyncLock = new();
+    private readonly Dictionary<int, DateTime> _lastKnockoutSyncAttemptUtc = new();
 
     public TimeSpan NextSuggestedDelay { get; internal set; } = TimeSpan.FromMinutes(15);
 
@@ -49,6 +58,8 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
                 var scoringApp = scope.ServiceProvider.GetRequiredService<IScoringApplication>();
 
                 hasActiveLiveMatches = await ProcessAutomationCycleAsync(unitOfWork, espnSync, webPush, scoringApp, stoppingToken);
+
+                await SyncKnockoutLeaguesAsync(scope.ServiceProvider, unitOfWork, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -66,6 +77,70 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         }
 
         _logger.LogInformation("[EspnLiveWorker] Deteniendo servicio de automatización.");
+    }
+
+    /// <summary>
+    /// SPEC-027: sincroniza las eliminatorias (Pick'em) de cada liga con formato de eliminatoria, como máximo una vez
+    /// cada <see cref="KnockoutSyncInterval"/> por liga (el intento cuenta aunque falle). Se ejecuta después de los
+    /// marcadores en vivo y cada liga tiene un tope de <see cref="KnockoutSyncTimeout"/>, así que un ESPN lento no
+    /// retrasa el ciclo en vivo. Un fallo se registra y no interrumpe el ciclo del worker.
+    /// </summary>
+    public async Task SyncKnockoutLeaguesAsync(IServiceProvider services, IUnitOfWork unitOfWork, CancellationToken ct)
+    {
+        try
+        {
+            var knockoutSync = services.GetRequiredService<IEspnKnockoutSyncService>();
+            var leagues = (await unitOfWork.Leagues.GetAllAsync())
+                .Where(l => !string.IsNullOrEmpty(l.KnockoutFormatCode))
+                .ToList();
+
+            foreach (var league in leagues)
+            {
+                if (!TryReserveKnockoutSync(league.Id, DateTime.UtcNow)) continue;
+
+                try
+                {
+                    using var leagueCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    leagueCts.CancelAfter(KnockoutSyncTimeout);
+
+                    var changedNodes = await knockoutSync.SyncLeagueAsync(league.Id, leagueCts.Token);
+                    if (changedNodes > 0)
+                        _logger.LogInformation("[EspnLiveWorker] Eliminatorias de '{0}': {1} nodos actualizados.", league.Name, changedNodes);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError("[EspnLiveWorker] Error sincronizando eliminatorias de '{0}': {1}\n{2}", league.Name, ex.Message, ex.StackTrace ?? "");
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError("[EspnLiveWorker] Error sincronizando eliminatorias: {0}\n{1}", ex.Message, ex.StackTrace ?? "");
+        }
+    }
+
+    /// <summary>Marca el intento de sincronización de la liga si ya pasó el intervalo; false si aún no toca.</summary>
+    private bool TryReserveKnockoutSync(int leagueId, DateTime nowUtc)
+    {
+        lock (_knockoutSyncLock)
+        {
+            if (_lastKnockoutSyncAttemptUtc.TryGetValue(leagueId, out var lastAttemptUtc)
+                && nowUtc - lastAttemptUtc < KnockoutSyncInterval)
+            {
+                return false;
+            }
+
+            _lastKnockoutSyncAttemptUtc[leagueId] = nowUtc;
+            return true;
+        }
     }
 
     /// <summary>

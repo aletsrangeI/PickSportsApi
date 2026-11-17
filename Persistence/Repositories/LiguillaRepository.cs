@@ -62,6 +62,31 @@ public class LiguillaRepository : ILiguillaRepository
         return Task.CompletedTask;
     }
 
+    public async Task<List<LiguillaBracketPick>> GetPicksByBracketAsync(int bracketId, CancellationToken ct = default)
+    {
+        return await _context.LiguillaBracketPicks
+            .AsNoTracking()
+            .Where(p => p.BracketId == bracketId)
+            .OrderBy(p => p.RoundCode)
+            .ThenBy(p => p.Slot)
+            .ToListAsync(ct);
+    }
+
+    public async Task ReplacePicksAsync(int bracketId, IReadOnlyList<LiguillaBracketPick> picks, CancellationToken ct = default)
+    {
+        var existing = await _context.LiguillaBracketPicks
+            .Where(p => p.BracketId == bracketId)
+            .ToListAsync(ct);
+        _context.LiguillaBracketPicks.RemoveRange(existing);
+
+        foreach (var pick in picks)
+        {
+            pick.BracketId = bracketId;
+        }
+
+        await _context.LiguillaBracketPicks.AddRangeAsync(picks, ct);
+    }
+
     public async Task AddNodeAsync(LiguillaNode node, CancellationToken ct = default)
     {
         await _context.LiguillaNodes.AddAsync(node, ct);

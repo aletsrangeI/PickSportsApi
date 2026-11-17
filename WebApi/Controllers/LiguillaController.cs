@@ -113,6 +113,41 @@ public class LiguillaController : ControllerBase
     }
 
     /// <summary>
+    /// POST /api/quinielas/{quinielaId}/liguilla/picks
+    /// Registra o actualiza los pronósticos de Liguilla por ronda.
+    /// </summary>
+    [HttpPost("picks")]
+    public async Task<IActionResult> SubmitPicks(int quinielaId, [FromBody] SubmitLiguillaPicksDto dto)
+    {
+        var userId = GetCurrentUserId();
+        if (userId <= 0) return Unauthorized();
+
+        try
+        {
+            IReadOnlyDictionary<string, IReadOnlyList<int>> picksByRound = (dto?.PicksByRound ?? new Dictionary<string, List<int>>())
+                .ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => (IReadOnlyList<int>)(kvp.Value ?? new List<int>()));
+
+            var result = await _liguillaApplication.SubmitPicksAsync(quinielaId, userId, picksByRound);
+            return Ok(new Response<LiguillaBracketDetailDto>
+            {
+                Data = result,
+                isSuccess = true,
+                Message = "¡Pronóstico de Liguilla registrado exitosamente!"
+            });
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+        {
+            return BadRequest(new Response<LiguillaBracketDetailDto>
+            {
+                isSuccess = false,
+                Message = ex.Message
+            });
+        }
+    }
+
+    /// <summary>
     /// GET /api/quinielas/{quinielaId}/liguilla/standings
     /// Obtiene la tabla de posiciones independiente de Pick'em Liguilla con los criterios de desempate en cascada.
     /// </summary>
