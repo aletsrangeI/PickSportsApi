@@ -394,6 +394,120 @@ public class LiguillaApplicationTests
         result.Standings.Select(s => s.Alias).Should().Equal("A", "B");
     }
 
+    private void ArrangeNhlSeason(List<LiguillaNode> nodes)
+    {
+        var quiniela = new Quiniela { Id = QuinielaId, League = NhlLeague(), LeagueId = LeagueId };
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Seasons.GetCurrentSeasonAsync(LeagueId))
+            .ReturnsAsync(new Season { Id = SeasonId, LeagueId = LeagueId, IsCurrent = true });
+        _mockUow.Setup(u => u.Weeks.GetBySeasonIdAsync(SeasonId))
+            .ReturnsAsync(new List<Week> { new() { SeasonId = SeasonId, WeekNumber = 1, Status = "SCORED" } });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>())).ReturnsAsync(nodes);
+        _mockUow.Setup(u => u.Liguilla.GetBracketAsync(QuinielaId, UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LiguillaBracket?)null);
+    }
+
+    private static List<LiguillaNode> NhlFirstRoundWithoutKickoff(int resolvedCount) =>
+        Enumerable.Range(1, 8).Select(number => new LiguillaNode
+        {
+            SeasonId = SeasonId,
+            Round = "R1",
+            NodeNumber = number,
+            TeamAId = number * 2 - 1,
+            TeamA = new Team { Id = number * 2 - 1, Name = $"Equipo {number * 2 - 1:00}" },
+            TeamBId = number * 2,
+            TeamB = new Team { Id = number * 2, Name = $"Equipo {number * 2:00}" },
+            IsResolved = number <= resolvedCount,
+            WinnerTeamId = number <= resolvedCount ? number * 2 - 1 : null
+        }).ToList();
+
+    [Fact]
+    public async Task SubmitPicks_WhenNoKickoffButAFirstRoundNodeIsResolved_ThrowsExpired()
+    {
+        // Arrange: ningun nodo trae KickoffUtc, pero la primera ronda ya empezo a resolverse
+        ArrangeNhlSeason(NhlFirstRoundWithoutKickoff(resolvedCount: 1));
+        var picks = new Dictionary<string, IReadOnlyList<int>> { ["R1"] = new[] { 1, 3, 5, 7, 9, 11, 13, 15 } };
+
+        // Act
+        var act = () => CreateNhlSut().SubmitPicksAsync(QuinielaId, UserId, picks);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*tiempo límite*ha expirado*");
+        _mockUow.Verify(u => u.Liguilla.AddBracketAsync(It.IsAny<LiguillaBracket>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetOverview_WhenNoKickoffButAFirstRoundNodeIsResolved_ReturnsLockedInProgress()
+    {
+        // Arrange
+        ArrangeNhlSeason(NhlFirstRoundWithoutKickoff(resolvedCount: 1));
+
+        // Act
+        var result = await CreateNhlSut().GetOverviewAsync(QuinielaId, UserId, isAdmin: false);
+
+        // Assert
+        result.Status.Should().Be("LOCKED_IN_PROGRESS");
+    }
+
+    [Fact]
+    public async Task GetOverview_WhenNoKickoffAndNothingResolved_StaysOpenForPicks()
+    {
+        // Arrange
+        ArrangeNhlSeason(NhlFirstRoundWithoutKickoff(resolvedCount: 0));
+
+        // Act
+        var result = await CreateNhlSut().GetOverviewAsync(QuinielaId, UserId, isAdmin: false);
+
+        // Assert
+        result.Status.Should().Be("OPEN_FOR_PICKS");
+    }
+
+    [Theory]
+    [InlineData(99)]
+    [InlineData(0)]
+    public async Task ResolveNode_WhenWinnerIsNotOneOfTheTeams_ThrowsArgumentExceptionAndChangesNothing(int winnerTeamId)
+    {
+        // Arrange
+        var node = new LiguillaNode { Id = 5, SeasonId = SeasonId, Round = "QF", NodeNumber = 1, TeamAId = 1, TeamBId = 8 };
+        var quiniela = new Quiniela { Id = QuinielaId, League = FmfLeague(), LeagueId = LeagueId };
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Liguilla.GetNodeByIdAsync(node.Id, It.IsAny<CancellationToken>())).ReturnsAsync(node);
+
+        // Act
+        var act = () => _sut.ResolveNodeAsync(QuinielaId, new ResolveLiguillaNodeRequestDto { NodeId = node.Id, WinnerTeamId = winnerTeamId });
+
+        // Assert
+        await act.Should().ThrowAsync<ArgumentException>().WithMessage("El ganador debe ser uno de los equipos del cruce.");
+        node.IsResolved.Should().BeFalse();
+        node.WinnerTeamId.Should().BeNull();
+        _mockUow.Verify(u => u.Liguilla.UpdateNodeAsync(It.IsAny<LiguillaNode>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockUow.Verify(u => u.Save(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetMyBracket_NhlBracket_ExposesPointsByRound()
+    {
+        // Arrange: un acierto en R1 (10 puntos) sobre un nodo resuelto
+        const int bracketId = 77;
+        var bracket = new LiguillaBracket { Id = bracketId, QuinielaId = QuinielaId, UserId = UserId, IsLocked = true };
+        _mockUow.Setup(u => u.Liguilla.GetBracketAsync(QuinielaId, UserId, It.IsAny<CancellationToken>())).ReturnsAsync(bracket);
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(new Quiniela { Id = QuinielaId, League = NhlLeague(), LeagueId = LeagueId });
+        _mockUow.Setup(u => u.Seasons.GetCurrentSeasonAsync(LeagueId))
+            .ReturnsAsync(new Season { Id = SeasonId, LeagueId = LeagueId, IsCurrent = true });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaNode> { ResolvedNode(1, "R1", 1) });
+        _mockUow.Setup(u => u.Liguilla.GetPicksByBracketAsync(bracketId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PicksOf(bracketId, ("R1", new[] { 1 })));
+        _mockUow.Setup(u => u.Users.GetAsync(UserId)).ReturnsAsync(new User { Id = UserId, Username = "Alex" });
+
+        // Act
+        var result = await CreateNhlSut().GetMyBracketAsync(QuinielaId, UserId);
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.PointsByRound.Should().ContainKey("R1").WhoseValue.Should().Be(10);
+    }
+
     private static LiguillaNode ResolvedNode(int number, string round, int winnerTeamId) => new()
     {
         SeasonId = SeasonId,

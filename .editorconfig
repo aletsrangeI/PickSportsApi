@@ -1,0 +1,10 @@
+# Reglas de calidad de PickSportsApi.
+# Cada regla nace de un error real que se repitio al generar codigo con distintos modelos; ver AGENTS.md ("Reglas anti-regresion").
+root = true
+
+[*]
+charset = utf-8
+
+[*.cs]
+# CS8619: la anulabilidad de un tipo no coincide con la esperada (p. ej. mezclar (string?)null con string en un arreglo anonimo).
+dotnet_diagnostic.CS8619.severity = error

@@ -73,7 +73,7 @@ public class LiguillaApplication : ILiguillaApplication
 
         // Determinar status operativo
         DateTime? lockDeadlineUtc = GetLockDeadline(firstRoundNodes);
-        bool isLocked = lockDeadlineUtc.HasValue && DateTime.UtcNow >= lockDeadlineUtc.Value;
+        bool isLocked = IsPicksLocked(lockDeadlineUtc, firstRoundNodes);
         string finalRoundCode = strategy.Rounds[^1].Code;
         bool isFinished = nodes.Any(n => string.Equals(n.Round, finalRoundCode, StringComparison.OrdinalIgnoreCase) && n.IsResolved);
 
@@ -207,8 +207,8 @@ public class LiguillaApplication : ILiguillaApplication
         var nodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct);
 
         // 1. Validar fecha límite de bloqueo (Kickoff del primer partido de la primera ronda)
-        DateTime? lockDeadlineUtc = GetLockDeadline(GetFirstRoundNodes(strategy, nodes));
-        if (lockDeadlineUtc.HasValue && DateTime.UtcNow >= lockDeadlineUtc.Value)
+        var firstRoundNodes = GetFirstRoundNodes(strategy, nodes);
+        if (IsPicksLocked(GetLockDeadline(firstRoundNodes), firstRoundNodes))
         {
             throw new InvalidOperationException("El tiempo límite para registrar pronósticos de Liguilla ha expirado.");
         }
@@ -382,6 +382,9 @@ public class LiguillaApplication : ILiguillaApplication
         if (node == null)
             throw new KeyNotFoundException($"No se encontró el nodo con Id {dto.NodeId}.");
 
+        if (dto.WinnerTeamId != node.TeamAId && dto.WinnerTeamId != node.TeamBId)
+            throw new ArgumentException("El ganador debe ser uno de los equipos del cruce.");
+
         node.WinnerTeamId = dto.WinnerTeamId;
         node.IsResolved = true;
         node.ResolvedAtUtc = DateTime.UtcNow;
@@ -426,6 +429,11 @@ public class LiguillaApplication : ILiguillaApplication
 
     private static DateTime? GetLockDeadline(IReadOnlyList<LiguillaNode> firstRoundNodes) =>
         firstRoundNodes.Where(n => n.KickoffUtc.HasValue).Select(n => n.KickoffUtc).Min();
+
+    /// <summary>Bloqueado si la fecha límite ya pasó o si algún cruce de la primera ronda ya se resolvió (aunque no haya fecha).</summary>
+    private static bool IsPicksLocked(DateTime? lockDeadlineUtc, IReadOnlyList<LiguillaNode> firstRoundNodes) =>
+        (lockDeadlineUtc.HasValue && DateTime.UtcNow >= lockDeadlineUtc.Value)
+        || firstRoundNodes.Any(n => n.IsResolved);
 
     /// <summary>Picks por ronda del bracket: genéricos si existen; si no, y solo en FMF, derivados de las columnas legadas.</summary>
     private async Task<Dictionary<string, IReadOnlyList<int>>> LoadPicksAsync(
@@ -595,7 +603,8 @@ public class LiguillaApplication : ILiguillaApplication
             ChampionPoints = lastPts,
             BonusPoints = score.BonusPoints,
             ShatteredTeamIds = score.ShatteredTeamIds.ToList(),
-            PicksByRound = picks.ToDictionary(kv => kv.Key, kv => kv.Value.ToList())
+            PicksByRound = picks.ToDictionary(kv => kv.Key, kv => kv.Value.ToList()),
+            PointsByRound = score.PointsByRound.ToDictionary(kv => kv.Key, kv => kv.Value)
         };
 
         // Campos legados del frontend: solo tienen sentido en la Liguilla FMF

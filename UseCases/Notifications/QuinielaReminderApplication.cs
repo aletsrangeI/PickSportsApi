@@ -5,6 +5,7 @@ using Domain.Entities;
 using DTO.Notifications;
 using Interface.Persistence;
 using Interface.UseCases;
+using Interface.UseCases.Knockout;
 
 namespace UseCases.Notifications;
 
@@ -24,15 +25,18 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
     private readonly IUnitOfWork _unitOfWork;
     private readonly IWebPushNotificationService _webPushService;
     private readonly IAppLogger<QuinielaReminderApplication> _logger;
+    private readonly IKnockoutStrategyResolver _strategyResolver;
 
     public QuinielaReminderApplication(
         IUnitOfWork unitOfWork,
         IWebPushNotificationService webPushService,
-        IAppLogger<QuinielaReminderApplication> logger)
+        IAppLogger<QuinielaReminderApplication> logger,
+        IKnockoutStrategyResolver strategyResolver)
     {
         _unitOfWork = unitOfWork;
         _webPushService = webPushService;
         _logger = logger;
+        _strategyResolver = strategyResolver;
     }
 
     public static TimeZoneInfo GetMexicoTimeZone()
@@ -99,7 +103,7 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
                 if (dayOfWeek == DayOfWeek.Monday && timeOfDay >= new TimeSpan(12, 0, 0))
                 {
                     totalNotificationsSent += await ProcessMondayOpeningAsync(quiniela, weeks, todayDateStr, nowUtc, ct);
-                    totalNotificationsSent += await ProcessMondayLiguillaAnnouncementAsync(quiniela, weeks, todayDateStr, nowUtc, ct);
+                    totalNotificationsSent += await ProcessMondayLiguillaAnnouncementAsync(quiniela, seasonId, weeks, todayDateStr, nowUtc, ct);
                 }
 
                 // -----------------------------------------------------------------------------------
@@ -185,6 +189,7 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
 
     private async Task<int> ProcessMondayLiguillaAnnouncementAsync(
         Quiniela quiniela,
+        int seasonId,
         List<Week> weeks,
         string todayDateStr,
         DateTime nowUtc,
@@ -194,7 +199,14 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         if (!quiniela.LeagueId.HasValue) return 0;
 
         var league = await _unitOfWork.Leagues.GetAsync(quiniela.LeagueId.Value);
-        if (league is null || string.IsNullOrWhiteSpace(league.KnockoutFormatCode)) return 0;
+        if (league is null) return 0;
+
+        if (string.IsNullOrWhiteSpace(league.KnockoutFormatCode))
+        {
+            _logger.LogWarning("[QuinielaReminder] La liga {0} de la quiniela '{1}' no tiene KnockoutFormatCode: no se anuncia Pick'em.",
+                league.Id, quiniela.Name);
+            return 0;
+        }
 
         var announcement = BuildAnnouncementCopy(league.KnockoutFormatCode, quiniela.Name);
         if (announcement is null) return 0;
@@ -203,6 +215,13 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         var regularWeeks = weeks.Where(w => w.WeekNumber <= league.WeeksCount).ToList();
         bool isRegularSeasonFinished = regularWeeks.Count > 0 && regularWeeks.All(w => string.Equals(w.Status, "SCORED", StringComparison.OrdinalIgnoreCase));
         if (!isRegularSeasonFinished) return 0;
+
+        // Misma condición de disponibilidad que GetOverview: el campo debe estar sembrado antes de anunciar.
+        var strategy = _strategyResolver.For(league);
+        if (strategy is null) return 0;
+
+        var nodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId, ct);
+        if (!strategy.IsFieldReady(nodes, true)) return 0;
 
         // Idempotencia: Verificar si ya se envió el anuncio de Liguilla para esta quiniela
         var alreadySent = await _unitOfWork.PushNotificationLogs.HasLiguillaAnnouncementBeenSentAsync(quiniela.Id, ct);

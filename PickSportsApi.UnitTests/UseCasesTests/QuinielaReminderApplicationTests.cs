@@ -4,7 +4,10 @@ using DTO.Notifications;
 using FluentAssertions;
 using Interface.Persistence;
 using Interface.UseCases;
+using Interface.UseCases.Knockout;
 using Moq;
+using UseCases.Liguilla;
+using UseCases.Liguilla.Strategies;
 using UseCases.Notifications;
 using Xunit;
 using DbMatch = Domain.Entities.Match;
@@ -29,9 +32,12 @@ public class QuinielaReminderApplicationTests
     private readonly Mock<IQuinielaMemberRepository> _mockMembers = new();
     private readonly Mock<IPickRepository> _mockPicks = new();
     private readonly Mock<IPushNotificationLogRepository> _mockLogs = new();
+    private readonly Mock<ILiguillaRepository> _mockLiguilla = new();
 
     public QuinielaReminderApplicationTests()
     {
+        _mockUow.Setup(u => u.Liguilla).Returns(_mockLiguilla.Object);
+        ArrangeSeasonNodes(SeededFieldFor(FmfLiguillaFormatCode));
         _mockUow.Setup(u => u.Quinielas).Returns(_mockQuinielas.Object);
         _mockUow.Setup(u => u.Leagues).Returns(_mockLeagues.Object);
         _mockUow.Setup(u => u.Seasons).Returns(_mockSeasons.Object);
@@ -45,6 +51,35 @@ public class QuinielaReminderApplicationTests
         _mockLeagues.Setup(l => l.GetAsync(LeagueId))
             .ReturnsAsync(new League { Id = LeagueId, KnockoutFormatCode = FmfLiguillaFormatCode, WeeksCount = FmfLiguillaWeeksCount });
     }
+
+    private QuinielaReminderApplication CreateService() =>
+        new(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object, new KnockoutStrategyResolver(new IKnockoutFormatStrategy[]
+        {
+            new FmfLiguillaStrategy(), new NhlBestOfSevenStrategy(), new NflReseededStrategy(), new UefaTwoLegStrategy()
+        }));
+
+    /// <summary>Primera ronda sembrada (con equipos en ambos lados) del formato indicado.</summary>
+    private static List<LiguillaNode> SeededFieldFor(string? knockoutFormatCode)
+    {
+        var (round, count) = knockoutFormatCode switch
+        {
+            "NHL_BEST_OF_7" => ("R1", 8),
+            "NFL_RESEEDED_SINGLE_GAME" => ("WC", 6),
+            "UEFA_TWO_LEG" => ("R16", 8),
+            _ => ("QF", 4)
+        };
+
+        return Enumerable.Range(1, count).Select(number => new LiguillaNode
+        {
+            Round = round,
+            NodeNumber = number,
+            TeamAId = number * 2 - 1,
+            TeamBId = number * 2
+        }).ToList();
+    }
+
+    private void ArrangeSeasonNodes(List<LiguillaNode> nodes) =>
+        _mockLiguilla.Setup(l => l.GetNodesBySeasonAsync(5, It.IsAny<CancellationToken>())).ReturnsAsync(nodes);
 
     private void ArrangeFinishedRegularSeasonForLeague(string? knockoutFormatCode, int weeksCount = FmfLiguillaWeeksCount)
     {
@@ -62,6 +97,7 @@ public class QuinielaReminderApplicationTests
         _mockQuinielas.Setup(q => q.GetAllAsync()).ReturnsAsync(new List<Quiniela> { quiniela });
         _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
         _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(weeks);
+        ArrangeSeasonNodes(SeededFieldFor(knockoutFormatCode));
         _mockLeagues.Setup(l => l.GetAsync(LeagueId)).ReturnsAsync(new League
         {
             Id = LeagueId,
@@ -90,7 +126,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(3);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -129,7 +165,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(2);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -158,7 +194,7 @@ public class QuinielaReminderApplicationTests
         _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(new List<Week> { new() { Id = 100, SeasonId = 5, WeekNumber = 8, Status = "PUBLISHED", Active = true } });
         _mockWeeks.Setup(w => w.GetBySeasonIdAsync(6)).ReturnsAsync(new List<Week> { new() { Id = 200, SeasonId = 6, WeekNumber = 3, Status = "PUBLISHED", Active = true } });
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -184,7 +220,7 @@ public class QuinielaReminderApplicationTests
         _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
         _mockWeeks.Setup(w => w.GetBySeasonIdAsync(5)).ReturnsAsync(new List<Week> { week });
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -238,7 +274,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToUserAsync(202, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(tuesdayUtc);
@@ -281,7 +317,7 @@ public class QuinielaReminderApplicationTests
         _mockLogs.Setup(l => l.HasNotificationBeenSentTodayAsync("INCOMPLETE_PICKS_REMINDER", 100, 1, 202, "2026-09-29", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(tuesdayUtc);
@@ -323,7 +359,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(5);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(saturdayUtc);
@@ -403,7 +439,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToUserAsync(100, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(1);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(fridaySimulatedUtc);
@@ -469,7 +505,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(5);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -500,7 +536,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(4);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -527,7 +563,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(4);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -555,7 +591,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(4);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -583,7 +619,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(4);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -611,7 +647,7 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(4);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(mondayUtc);
@@ -620,6 +656,40 @@ public class QuinielaReminderApplicationTests
         count.Should().Be(0);
         _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(It.IsAny<int>(), It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.NotificationType == "LIGUILLA_ANNOUNCED")), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_WhenWeeksScoredButFieldNotSeeded_ShouldNotAnnounceNorMarkAsSent()
+    {
+        // Arrange: Lunes 13:00 CST, semanas SCORED pero ESPN aun no publica los cruces (nodos sin equipos)
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague("NHL_BEST_OF_7");
+        ArrangeSeasonNodes(new List<LiguillaNode>());
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var service = CreateService();
+
+        // Act
+        var count = await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // Assert
+        count.Should().Be(0);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(It.IsAny<int>(), It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log => log.NotificationType == "LIGUILLA_ANNOUNCED")), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessDailyReminders_WhenLeagueHasQuinielaButNoKnockoutFormat_ShouldLogWarning()
+    {
+        // Arrange
+        var mondayUtc = new DateTime(2026, 9, 28, 19, 0, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague(null);
+        var service = CreateService();
+
+        // Act
+        await service.ProcessDailyRemindersAsync(mondayUtc);
+
+        // Assert
+        _mockLogger.Verify(l => l.LogWarning(It.IsAny<string>(), It.IsAny<object[]>()), Times.AtLeastOnce);
     }
 
     [Fact]
@@ -632,7 +702,7 @@ public class QuinielaReminderApplicationTests
         _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        var service = new QuinielaReminderApplication(_mockUow.Object, _mockWebPush.Object, _mockLogger.Object);
+        var service = CreateService();
 
         // ACT
         var count = await service.ProcessDailyRemindersAsync(mondayUtc);

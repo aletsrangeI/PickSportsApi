@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json.Nodes;
 using Domain.Common;
 using Domain.Entities;
 using FluentAssertions;
@@ -221,6 +222,153 @@ public class EspnKnockoutSyncServiceTests
         _added.Should().BeEmpty();
         _uow.Verify(u => u.Save(It.IsAny<CancellationToken>()), Times.Never);
         VerifyWarning(Times.AtLeastOnce());
+    }
+
+    private void ArrangeNflStrategyWithSeason(Season season)
+    {
+        var nfl = new NflReseededStrategy();
+        _strategy.Setup(s => s.FormatCode).Returns(nfl.FormatCode);
+        _strategy.Setup(s => s.Rounds).Returns(nfl.Rounds);
+        _uow.Setup(u => u.Seasons.GetCurrentSeasonAsync(LeagueId)).ReturnsAsync(season);
+        SetTeams((21, "7"), (22, "26"));
+    }
+
+    private static HttpResponseMessage NflResponse(HttpRequestMessage request) =>
+        Json(request.RequestUri!.AbsolutePath.Contains("standings")
+            ? Fixture("nfl-standings-2025")
+            : Fixture("nfl-postseason-20260111"));
+
+    [Fact]
+    public async Task SyncLeagueAsync_PlayoffsOfPreviousSeason_AreDiscardedAndNothingIsSeeded()
+    {
+        // Arrange: la temporada vigente arranca en agosto de 2026; los playoffs de enero de 2026 son de la anterior
+        ArrangeNflStrategyWithSeason(new Season
+        {
+            Id = SeasonId, LeagueId = LeagueId, Year = 2026, IsCurrent = true,
+            StartDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc),
+            EndDate = new DateTime(2027, 2, 15, 0, 0, 0, DateTimeKind.Utc)
+        });
+        var service = CreateService(NflResponse);
+
+        // Act
+        var changed = await service.SyncLeagueAsync(LeagueId);
+
+        // Assert
+        changed.Should().Be(0);
+        _added.Should().BeEmpty();
+        _nodes.Should().NotContain(n => n.IsResolved);
+        _uow.Verify(u => u.Save(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncLeagueAsync_PlayoffsInsideSeasonWindow_AreSeeded()
+    {
+        // Arrange: temporada 2025-08-01..2026-08-01, los playoffs de enero de 2026 le pertenecen
+        ArrangeNflStrategyWithSeason(new Season
+        {
+            Id = SeasonId, LeagueId = LeagueId, Year = 2025, IsCurrent = true,
+            StartDate = new DateTime(2025, 8, 1, 0, 0, 0, DateTimeKind.Utc),
+            EndDate = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)
+        });
+        var service = CreateService(NflResponse);
+
+        // Act
+        var changed = await service.SyncLeagueAsync(LeagueId);
+
+        // Assert
+        changed.Should().BeGreaterThan(0);
+        _added.Should().Contain(n => n.Round == "DIV" && n.TeamAId == 21 && n.SeedA == 1);
+    }
+
+    /// <summary>Devuelve el fixture con la ventana <c>leagues[0].season</c> reemplazada (o sin ella si ambas fechas son null).</summary>
+    private static string WithEspnSeasonWindow(string fixtureJson, string? start, string? end)
+    {
+        var root = JsonNode.Parse(fixtureJson)!;
+        var season = root["leagues"]![0]!["season"]!.AsObject();
+        season.Remove("startDate");
+        season.Remove("endDate");
+        if (start != null) season["startDate"] = start;
+        if (end != null) season["endDate"] = end;
+        return root.ToJsonString();
+    }
+
+    private static Season NflSeasonWithoutDates() =>
+        new() { Id = SeasonId, LeagueId = LeagueId, Year = 2026, IsCurrent = true };
+
+    private HttpResponseMessage NflResponseWithWindow(HttpRequestMessage request, string? start, string? end) =>
+        Json(request.RequestUri!.AbsolutePath.Contains("standings")
+            ? Fixture("nfl-standings-2025")
+            : WithEspnSeasonWindow(Fixture("nfl-postseason-20260111"), start, end));
+
+    [Fact]
+    public async Task SyncLeagueAsync_SeasonWithoutDatesAndEspnWindowOfCurrentSeason_DiscardsPreviousSeasonPlayoffs()
+    {
+        // Arrange: NFL 2026 sin fechas; ESPN anuncia la ventana 2026-08-06..2027-02-16, los cruces del fixture son de enero de 2026
+        ArrangeNflStrategyWithSeason(NflSeasonWithoutDates());
+        var service = CreateService(r => NflResponseWithWindow(r, "2026-08-06T07:00Z", "2027-02-16T07:59Z"));
+
+        // Act
+        var changed = await service.SyncLeagueAsync(LeagueId);
+
+        // Assert
+        changed.Should().Be(0);
+        _added.Should().BeEmpty();
+        _uow.Verify(u => u.Save(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncLeagueAsync_SeasonWithoutDatesAndEspnWindowContainingTies_SeedsThem()
+    {
+        // Arrange: ventana ESPN 2025-07-31..2026-02-12 contiene los playoffs de enero de 2026
+        ArrangeNflStrategyWithSeason(NflSeasonWithoutDates());
+        var service = CreateService(r => NflResponseWithWindow(r, "2025-07-31T07:00Z", "2026-02-12T07:59Z"));
+
+        // Act
+        var changed = await service.SyncLeagueAsync(LeagueId);
+
+        // Assert
+        changed.Should().BeGreaterThan(0);
+        _added.Should().Contain(n => n.Round == "DIV" && n.TeamAId == 21 && n.SeedA == 1);
+    }
+
+    [Fact]
+    public async Task SyncLeagueAsync_NoWindowInSeasonNorEspn_DoesNothingAndLogsWarning()
+    {
+        // Arrange
+        ArrangeNflStrategyWithSeason(NflSeasonWithoutDates());
+        var service = CreateService(r => NflResponseWithWindow(r, null, null));
+
+        // Act
+        var changed = await service.SyncLeagueAsync(LeagueId);
+
+        // Assert
+        changed.Should().Be(0);
+        _added.Should().BeEmpty();
+        _uow.Verify(u => u.Save(It.IsAny<CancellationToken>()), Times.Never);
+        VerifyWarning(Times.AtLeastOnce());
+    }
+
+    [Fact]
+    public async Task SyncLeagueAsync_RequestsEspnBeforeLoadingNodes_SoAdminResolutionsMadeMeanwhileAreNotOverwritten()
+    {
+        // Arrange
+        var calls = new List<string>();
+        SetTeams((1, "15"), (2, "16"));
+        _uow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>()))
+            .Callback<int, CancellationToken>((_, _) => calls.Add("nodes"))
+            .ReturnsAsync(_nodes);
+        var service = CreateService(_ =>
+        {
+            calls.Add("espn");
+            return Json(Fixture("nhl-playoffs-20260420"));
+        });
+
+        // Act
+        await service.SyncLeagueAsync(LeagueId);
+
+        // Assert
+        calls.Should().Contain("nodes");
+        calls.IndexOf("nodes").Should().BeGreaterThan(calls.LastIndexOf("espn"));
     }
 
     private void VerifyWarning(Times times) =>

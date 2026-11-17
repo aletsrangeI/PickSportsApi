@@ -65,6 +65,9 @@ public class LiguillaBracketDetailDto
 
     /// <summary>Picks por ronda (código de ronda → TeamIds por slot) para cualquier formato.</summary>
     public Dictionary<string, List<int>> PicksByRound { get; set; } = new();
+
+    /// <summary>Puntos obtenidos por ronda (código de ronda → puntos) para etiquetar el desglose en cualquier formato.</summary>
+    public Dictionary<string, int> PointsByRound { get; set; } = new();
 }
 
 public class LiguillaRoundDto

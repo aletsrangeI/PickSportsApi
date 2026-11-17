@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using Domain.Common;
 using Domain.Entities;
 using Interface.Persistence;
@@ -58,9 +60,10 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
 
         IReadOnlyList<EspnKnockoutTie> ties;
         IReadOnlyDictionary<string, NflPlayoffSeed> seeds;
+        SeasonWindow? espnWindow;
         try
         {
-            (ties, seeds) = await FetchAsync(league, season, strategy.FormatCode, ct);
+            (ties, seeds, espnWindow) = await FetchAsync(league, season, strategy.FormatCode, ct);
         }
         catch (HttpRequestException ex)
         {
@@ -73,6 +76,18 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             return 0;
         }
 
+        // ESPN devuelve por año calendario: descarta las eliminatorias de otra temporada (p. ej. los playoffs de enero previos).
+        var start = season.StartDate ?? espnWindow?.Start;
+        var end = season.EndDate ?? espnWindow?.End;
+        if (!start.HasValue || !end.HasValue)
+        {
+            _logger.LogWarning(
+                "[EspnKnockoutSync] Sin ventana de temporada (ni en la temporada {SeasonId} ni en ESPN) para la liga {LeagueId}; no se siembra ni resuelve nada.",
+                season.Id, leagueId);
+            return 0;
+        }
+
+        ties = ties.Where(t => IsInSeasonWindow(t, start.Value, end.Value)).ToList();
         if (ties.Count == 0) return 0;
 
         // NFL depende de las siembras de standings: sin ellas no se siembra ni resuelve nada (se reintenta en el siguiente ciclo).
@@ -97,13 +112,56 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
         return await PersistAsync(context, ct);
     }
 
+    /// <summary>
+    /// Un cruce solo pertenece a la temporada vigente si arranca dentro de su ventana [StartDate, EndDate].
+    /// Las fechas salen de la temporada y, si faltan, de <c>leagues[0].season</c> de ESPN. Sin KickoffUtc no se puede ubicar: se descarta.
+    /// </summary>
+    private static bool IsInSeasonWindow(EspnKnockoutTie tie, DateTime start, DateTime end) =>
+        tie.KickoffUtc.HasValue && tie.KickoffUtc.Value >= start && tie.KickoffUtc.Value <= end;
+
+    /// <summary>Lee solo <c>leagues[0].season.startDate/endDate</c> del scoreboard; null si falta o no parsea.</summary>
+    private static SeasonWindow? ParseEspnWindow(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("leagues", out var leagues)
+                || leagues.ValueKind != JsonValueKind.Array || leagues.GetArrayLength() == 0
+                || !leagues[0].TryGetProperty("season", out var season)
+                || season.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var start = ReadUtcDate(season, "startDate");
+            var end = ReadUtcDate(season, "endDate");
+            return start.HasValue && end.HasValue ? new SeasonWindow(start.Value, end.Value) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static DateTime? ReadUtcDate(JsonElement season, string property)
+    {
+        if (!season.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.String) return null;
+
+        return DateTimeOffset.TryParse(value.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            ? parsed.UtcDateTime
+            : null;
+    }
+
+    private sealed record SeasonWindow(DateTime Start, DateTime End);
+
     // ── Descarga ──────────────────────────────────────────────────────────────
 
-    private async Task<(IReadOnlyList<EspnKnockoutTie> Ties, IReadOnlyDictionary<string, NflPlayoffSeed> Seeds)> FetchAsync(
+    private async Task<(IReadOnlyList<EspnKnockoutTie> Ties, IReadOnlyDictionary<string, NflPlayoffSeed> Seeds, SeasonWindow? Window)> FetchAsync(
         League league, Season season, string formatCode, CancellationToken ct)
     {
         var (sport, leagueCode) = ResolveEspnPath(league);
         var ties = new Dictionary<string, EspnKnockoutTie>();
+        SeasonWindow? yearWindow = null;
 
         // Las fases finales caen en el año siguiente al de arranque de la temporada (NFL, Champions).
         var years = new[] { season.Year, season.EndDate?.Year ?? season.Year + 1 }.Distinct();
@@ -112,6 +170,7 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             var json = await FetchJsonAsync($"{ScoreboardBase}/{sport}/{leagueCode}/scoreboard?dates={year}&limit={ScoreboardLimit}", ct);
             if (json == null) continue;
 
+            yearWindow ??= ParseEspnWindow(json);
             foreach (var tie in _parser.ParseScoreboard(json, formatCode))
             {
                 if (!ties.TryGetValue(tie.GroupKey, out var known) || tie.SeriesCompleted || !known.SeriesCompleted)
@@ -127,7 +186,15 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
                 seeds = _parser.ParseNflPlayoffSeeds(standings);
         }
 
-        return (ties.Values.ToList(), seeds);
+        // Solo se pide la ventana vigente (scoreboard sin "dates") cuando la temporada no trae ambas fechas.
+        SeasonWindow? window = null;
+        if (!season.StartDate.HasValue || !season.EndDate.HasValue)
+        {
+            var current = await FetchJsonAsync($"{ScoreboardBase}/{sport}/{leagueCode}/scoreboard?limit={ScoreboardLimit}", ct);
+            window = ParseEspnWindow(current) ?? yearWindow;
+        }
+
+        return (ties.Values.ToList(), seeds, window);
     }
 
     private async Task<string?> FetchJsonAsync(string url, CancellationToken ct)

@@ -37,3 +37,10 @@ Siempre que un agente de IA vaya a leer, refactorizar o crear nuevo código en e
    - Autollenado no invasivo: `ON CONFLICT DO NOTHING`. Jamás sobreescribir picks humanos.
    - Cierre de jornada programado al arranque del primer partido.
    - Resiliencia obligatoria al consumir ESPN API (cabeceras reales, Polly retry y fallback en cascada).
+
+5. **Reglas anti-regresion (cada una nace de un error real; no dependen del modelo que escriba el codigo):**
+   - **Editar archivos solo con Edit/Write.** Prohibido reescribir codigo con `Get-Content`/`Set-Content`/`Out-File` de PowerShell: cambian la codificacion y dejan texto roto (`Futbol` -> `FÃºtbol`). Ademas `R` es alias de `Invoke-History`. `SourceHygieneTests` falla si un `.cs` contiene texto doble codificado.
+   - **Codigos de formato de eliminatoria solo desde `Domain.Common.KnockoutFormatCodes`.** Nunca escribas `"NHL_BEST_OF_7"` ni similares como literal; un modelo ya invento `NHL_BEST_OF_SEVEN`.
+   - **Toda entidad nueva con `Active = true` al crearla.** `BaseAuditableEntity.Active` vale `false` por defecto y los repositorios filtran por `Active`: sin eso la fila existe pero nadie la lee. Los mocks de `IUnitOfWork` no lo detectan; cubrelo con una prueba contra el repositorio real sobre EF InMemory (ver `EspnKnockoutSyncPersistenceTests`).
+   - **Anulabilidad coherente en arreglos y colecciones anonimas:** `CS8619` es error en `.editorconfig`; usa `(string?)` en todos los elementos.
+   - **Un test que mockea justo lo que debe probar no prueba nada:** si cambias una regla de negocio, verifica que el test falla antes de arreglarla (mutacion rapida).
