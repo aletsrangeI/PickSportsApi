@@ -51,6 +51,20 @@ public class LiguillaRepository : ILiguillaRepository
             .ToListAsync(ct);
     }
 
+    /// <summary>
+    /// Hay algun bracket enviado en una quiniela de esa temporada. Una quiniela sin SeasonId fijo resuelve la temporada vigente
+    /// de su liga (ver QuinielaSeasonResolver), asi que tambien cuenta cuando seasonId es la vigente de esa liga.
+    /// </summary>
+    public async Task<bool> AnyBracketsForSeasonAsync(int seasonId, CancellationToken ct = default)
+    {
+        return await _context.LiguillaBrackets
+            .AsNoTracking()
+            .AnyAsync(b => b.Active
+                && (b.Quiniela.SeasonId == seasonId
+                    || (b.Quiniela.SeasonId == null
+                        && _context.Seasons.Any(s => s.Id == seasonId && s.IsCurrent && s.LeagueId == b.Quiniela.LeagueId))), ct);
+    }
+
     public async Task AddBracketAsync(LiguillaBracket bracket, CancellationToken ct = default)
     {
         await _context.LiguillaBrackets.AddAsync(bracket, ct);

@@ -196,7 +196,7 @@ public class LiguillaController : ControllerBase
 
     /// <summary>
     /// POST /api/quinielas/{quinielaId}/liguilla/admin/seed-simulation
-    /// Sembrado de prueba con los 8 clasificados actuales de la Liga MX para pruebas locales y QA.
+    /// Sembrado de prueba con la tabla de posiciones de hoy, segun el formato de eliminatoria de la liga, para pruebas locales y QA.
     /// Solo permitido para administradores.
     /// </summary>
     [HttpPost("admin/seed-simulation")]
@@ -212,7 +212,7 @@ public class LiguillaController : ControllerBase
             {
                 Data = success,
                 isSuccess = true,
-                Message = "Simulación de Liguilla sembrada con los primeros 8 lugares de la tabla general."
+                Message = "Simulación de Liguilla sembrada con los standings de hoy."
             });
         }
         catch (Exception ex)

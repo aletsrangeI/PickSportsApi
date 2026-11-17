@@ -27,7 +27,8 @@ public class KnockoutSimulationServiceTests : IDisposable
     private const int NflNodeCount = 13;
     private const int FirstTeamId = 100;
     private const string StandingsBody = "{}";
-    private const string RealEspnResolvedMessage = "La temporada ya tiene cruces reales de ESPN; la simulación solo aplica a campos vacíos.";
+    private const string RealEspnResolvedMessage = "La temporada ya tiene cruces reales de ESPN o resultados; la simulación solo aplica a campos vacíos o simulados.";
+    private const string BracketsSubmittedMessage = "Ya hay pronósticos enviados en esta temporada; la simulación los dejaría inconsistentes.";
 
     private readonly ApplicationDbContext _context;
     private readonly LiguillaRepository _repository;
@@ -44,7 +45,8 @@ public class KnockoutSimulationServiceTests : IDisposable
         _context = new ApplicationDbContext(options, new AuditableEntitySaveChangesInterceptor());
         _repository = new LiguillaRepository(_context);
 
-        _quiniela = new Quiniela { Id = QuinielaId, LeagueId = LeagueId, SeasonId = SeasonId, League = _league };
+        _quiniela = NewQuiniela(SeasonId);
+        _quiniela.League = _league;
 
         _uow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(_quiniela);
         _uow.Setup(u => u.Leagues.GetAsync(LeagueId)).ReturnsAsync(_league);
@@ -57,6 +59,9 @@ public class KnockoutSimulationServiceTests : IDisposable
     }
 
     public void Dispose() => _context.Dispose();
+
+    private static Quiniela NewQuiniela(int? seasonId) =>
+        new() { Id = QuinielaId, LeagueId = LeagueId, SeasonId = seasonId, Name = "Quiniela QA", InviteCode = "QA123" };
 
     private KnockoutSimulationService BuildService(
         string formatCode, IKnockoutFormatStrategy strategy, IReadOnlyList<SimulatedTie> ties, HttpStatusCode status = HttpStatusCode.OK)
@@ -165,14 +170,14 @@ public class KnockoutSimulationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SeedAsync_ExistingManualNodes_AreResetToTheSimulatedField()
+    public async Task SeedAsync_PreviousSimulatedField_IsReseededWithTheNewField()
     {
-        // Arrange
+        // Arrange: campo simulado previo = sin clave de ESPN y sin resolver
         AddTeams(16);
         await _repository.AddNodeAsync(new LiguillaNode
         {
             SeasonId = SeasonId, Round = "R16", NodeNumber = 1, TeamAId = FirstTeamId + 3, TeamBId = FirstTeamId + 4,
-            WinnerTeamId = FirstTeamId + 3, IsResolved = true, ResolvedAtUtc = DateTime.UtcNow, Active = true
+            SeedA = 3, SeedB = 4, IsResolved = false, Active = true
         });
         await _context.SaveChangesAsync();
         var service = BuildService(KnockoutFormatCodes.UefaTwoLeg, new UefaTwoLegStrategy(), UefaTies());
@@ -187,8 +192,126 @@ public class KnockoutSimulationServiceTests : IDisposable
         first.TeamAId.Should().Be(FirstTeamId + 1);
         first.TeamBId.Should().Be(FirstTeamId + 16);
         first.IsResolved.Should().BeFalse();
-        first.WinnerTeamId.Should().BeNull();
-        first.ResolvedAtUtc.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SeedAsync_RealSeriesInProgress_ThrowsAndLeavesItUntouched()
+    {
+        // Arrange: serie real de ESPN en curso (clave presente, sin resolver)
+        AddTeams(16);
+        await _repository.AddNodeAsync(new LiguillaNode
+        {
+            SeasonId = SeasonId, Round = "R16", NodeNumber = 1, TeamAId = FirstTeamId + 3, TeamBId = FirstTeamId + 4,
+            EspnEventGroupKey = "round-of-16:3-4", IsResolved = false, Active = true
+        });
+        await _context.SaveChangesAsync();
+        var service = BuildService(KnockoutFormatCodes.UefaTwoLeg, new UefaTwoLegStrategy(), UefaTies());
+
+        // Act
+        var act = () => service.SeedAsync(QuinielaId);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage(RealEspnResolvedMessage);
+        var nodes = await _repository.GetNodesBySeasonAsync(SeasonId);
+        nodes.Should().ContainSingle();
+        nodes[0].EspnEventGroupKey.Should().Be("round-of-16:3-4");
+        nodes[0].TeamAId.Should().Be(FirstTeamId + 3);
+    }
+
+    [Fact]
+    public async Task SeedAsync_NodeResolvedByHandWithoutEspnKey_ThrowsAndLeavesItUntouched()
+    {
+        // Arrange: nodo resuelto a mano por el admin (resuelto, sin clave de ESPN)
+        AddTeams(16);
+        await _repository.AddNodeAsync(new LiguillaNode
+        {
+            SeasonId = SeasonId, Round = "R16", NodeNumber = 1, TeamAId = FirstTeamId + 3, TeamBId = FirstTeamId + 4,
+            WinnerTeamId = FirstTeamId + 3, IsResolved = true, ResolvedAtUtc = DateTime.UtcNow, Active = true
+        });
+        await _context.SaveChangesAsync();
+        var service = BuildService(KnockoutFormatCodes.UefaTwoLeg, new UefaTwoLegStrategy(), UefaTies());
+
+        // Act
+        var act = () => service.SeedAsync(QuinielaId);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage(RealEspnResolvedMessage);
+        var nodes = await _repository.GetNodesBySeasonAsync(SeasonId);
+        nodes.Should().ContainSingle();
+        nodes[0].IsResolved.Should().BeTrue();
+        nodes[0].WinnerTeamId.Should().Be(FirstTeamId + 3);
+    }
+
+    [Fact]
+    public async Task SeedAsync_SeasonWithSubmittedBrackets_ThrowsAndKeepsTheField()
+    {
+        // Arrange: campo simulado previo + un bracket ya enviado en la temporada
+        AddTeams(16);
+        var service = BuildService(KnockoutFormatCodes.UefaTwoLeg, new UefaTwoLegStrategy(), UefaTies());
+        await service.SeedAsync(QuinielaId);
+        _context.Quinielas.Add(NewQuiniela(SeasonId));
+        _context.LiguillaBrackets.Add(new LiguillaBracket { QuinielaId = QuinielaId, UserId = 1, Active = true });
+        await _context.SaveChangesAsync();
+        var before = (await _repository.GetNodesBySeasonAsync(SeasonId)).Select(n => (n.NodeNumber, n.TeamAId)).ToList();
+
+        // Act
+        var act = () => service.SeedAsync(QuinielaId);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage(BracketsSubmittedMessage);
+        var after = (await _repository.GetNodesBySeasonAsync(SeasonId)).Select(n => (n.NodeNumber, n.TeamAId)).ToList();
+        after.Should().Equal(before);
+    }
+
+    [Fact]
+    public async Task AnyBracketsForSeasonAsync_QuinielaWithFixedSeason_FindsOnlyThatSeason()
+    {
+        // Arrange
+        _context.Quinielas.Add(NewQuiniela(SeasonId));
+        _context.LiguillaBrackets.Add(new LiguillaBracket { QuinielaId = QuinielaId, UserId = 1, Active = true });
+        await _context.SaveChangesAsync();
+
+        // Act
+        var same = await _repository.AnyBracketsForSeasonAsync(SeasonId);
+        var other = await _repository.AnyBracketsForSeasonAsync(SeasonId + 1);
+
+        // Assert
+        same.Should().BeTrue();
+        other.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AnyBracketsForSeasonAsync_QuinielaWithoutSeason_CountsOnlyForTheCurrentSeasonOfItsLeague()
+    {
+        // Arrange
+        _context.Seasons.AddRange(
+            new Season { Id = SeasonId, LeagueId = LeagueId, Name = "Actual", IsCurrent = true, Active = true },
+            new Season { Id = SeasonId + 1, LeagueId = LeagueId, Name = "Pasada", IsCurrent = false, Active = true });
+        _context.Quinielas.Add(NewQuiniela(null));
+        _context.LiguillaBrackets.Add(new LiguillaBracket { QuinielaId = QuinielaId, UserId = 1, Active = true });
+        await _context.SaveChangesAsync();
+
+        // Act
+        var current = await _repository.AnyBracketsForSeasonAsync(SeasonId);
+        var past = await _repository.AnyBracketsForSeasonAsync(SeasonId + 1);
+
+        // Assert
+        current.Should().BeTrue();
+        past.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AnyBracketsForSeasonAsync_NoBrackets_ReturnsFalse()
+    {
+        // Arrange
+        _context.Quinielas.Add(NewQuiniela(SeasonId));
+        await _context.SaveChangesAsync();
+
+        // Act
+        var any = await _repository.AnyBracketsForSeasonAsync(SeasonId);
+
+        // Assert
+        any.Should().BeFalse();
     }
 
     [Fact]
@@ -273,7 +396,7 @@ public class KnockoutSimulationServiceTests : IDisposable
         var act = () => service.SeedAsync(QuinielaId);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*formato de eliminatoria configurado*");
     }
 
     [Fact]
@@ -287,7 +410,7 @@ public class KnockoutSimulationServiceTests : IDisposable
         var act = () => service.SeedAsync(QuinielaId);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*equipos suficientes*");
         (await _repository.GetNodesBySeasonAsync(SeasonId)).Should().BeEmpty();
     }
 
@@ -302,7 +425,7 @@ public class KnockoutSimulationServiceTests : IDisposable
         var act = () => service.SeedAsync(QuinielaId);
 
         // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>();
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*no devolvió la tabla de posiciones*");
         (await _repository.GetNodesBySeasonAsync(SeasonId)).Should().BeEmpty();
     }
 

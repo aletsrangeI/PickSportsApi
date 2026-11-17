@@ -10,6 +10,7 @@ public interface ILiguillaRepository
     Task<List<LiguillaBracket>> GetAllBracketsForQuinielaAsync(int quinielaId, CancellationToken ct = default);
     Task AddBracketAsync(LiguillaBracket bracket, CancellationToken ct = default);
     Task UpdateBracketAsync(LiguillaBracket bracket, CancellationToken ct = default);
+    Task<bool> AnyBracketsForSeasonAsync(int seasonId, CancellationToken ct = default);
     Task AddNodeAsync(LiguillaNode node, CancellationToken ct = default);
     Task UpdateNodeAsync(LiguillaNode node, CancellationToken ct = default);
 

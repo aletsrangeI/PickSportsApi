@@ -61,8 +61,10 @@ public class KnockoutSimulationService : IKnockoutSimulationService
                        ?? throw new InvalidOperationException("No se encontró una temporada activa para esta liga.");
 
         var existingNodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId, ct);
-        if (existingNodes.Any(n => n.IsResolved && n.EspnEventGroupKey != null))
-            throw new InvalidOperationException("La temporada ya tiene cruces reales de ESPN; la simulación solo aplica a campos vacíos.");
+        if (existingNodes.Any(n => n.IsResolved || n.EspnEventGroupKey != null))
+            throw new InvalidOperationException("La temporada ya tiene cruces reales de ESPN o resultados; la simulación solo aplica a campos vacíos o simulados.");
+        if (await _unitOfWork.Liguilla.AnyBracketsForSeasonAsync(seasonId, ct))
+            throw new InvalidOperationException("Ya hay pronósticos enviados en esta temporada; la simulación los dejaría inconsistentes.");
 
         var json = await FetchStandingsAsync(builder.StandingsPath(league.EspnApiPath ?? string.Empty), ct);
         var ties = builder.Build(json);
