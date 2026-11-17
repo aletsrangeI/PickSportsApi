@@ -34,14 +34,16 @@ public class ModelIntegrityTests : IDisposable
 
         // Assert
         var sports = await _context.Sports.ToListAsync();
-        Assert.Equal(2, sports.Count);
+        Assert.Equal(3, sports.Count);
         Assert.Contains(sports, s => s.Code == "SOCCER" && s.HasDraw);
         Assert.Contains(sports, s => s.Code == "NFL" && !s.HasDraw);
+        Assert.Contains(sports, s => s.Code == "HOCKEY" && !s.HasDraw);
 
         var leagues = await _context.Leagues.ToListAsync();
-        Assert.Equal(4, leagues.Count);
+        Assert.Equal(5, leagues.Count);
         Assert.Contains(leagues, l => l.Code == "mex.1");
         Assert.Contains(leagues, l => l.Code == "nfl");
+        Assert.Contains(leagues, l => l.Code == "nhl" && l.KnockoutFormatCode == "NHL_BEST_OF_7");
 
         var admin = await _context.Users.FirstOrDefaultAsync(u => u.Email == "admin@picksports.local");
         Assert.NotNull(admin);

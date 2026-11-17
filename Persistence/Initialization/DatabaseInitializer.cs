@@ -75,13 +75,30 @@ public class DatabaseInitializer
             await _context.SaveChangesAsync();
         }
 
+        var hockey = await _context.Sports.FirstOrDefaultAsync(s => s.Code == "HOCKEY");
+        if (hockey == null)
+        {
+            hockey = new Sport
+            {
+                Code = "HOCKEY",
+                Name = "Hockey",
+                HasDraw = false,
+                Icon = "hockey",
+                Active = true,
+                Created = DateTime.UtcNow
+            };
+            await _context.Sports.AddAsync(hockey);
+            await _context.SaveChangesAsync();
+        }
+
         // 2. Ligas
         var leaguesToSeed = new[]
         {
             new { SportId = soccer.Id, Code = "mex.1", Name = "Liga MX", Country = "México", EspnApiPath = "sports/soccer/mex.1", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/mex.1.png", KnockoutFormatCode = (string?)KnockoutFormatCodes.FmfLiguilla },
             new { SportId = soccer.Id, Code = "eng.1", Name = "Premier League", Country = "Inglaterra", EspnApiPath = "sports/soccer/eng.1", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/eng.1.png", KnockoutFormatCode = (string?)null },
             new { SportId = soccer.Id, Code = "uefa.champions", Name = "UEFA Champions League", Country = "Europa", EspnApiPath = "sports/soccer/uefa.champions", Logo = "https://a.espncdn.com/i/leaguelogos/soccer/500/uefa.champions.png", KnockoutFormatCode = (string?)KnockoutFormatCodes.UefaTwoLeg },
-            new { SportId = nfl.Id, Code = "nfl", Name = "NFL", Country = "Estados Unidos", EspnApiPath = "sports/football/nfl", Logo = "https://a.espncdn.com/i/leaguelogos/nfl/500/nfl.png", KnockoutFormatCode = (string?)KnockoutFormatCodes.NflReseededSingleGame }
+            new { SportId = nfl.Id, Code = "nfl", Name = "NFL", Country = "Estados Unidos", EspnApiPath = "sports/football/nfl", Logo = "https://a.espncdn.com/i/leaguelogos/nfl/500/nfl.png", KnockoutFormatCode = (string?)KnockoutFormatCodes.NflReseededSingleGame },
+            new { SportId = hockey.Id, Code = "nhl", Name = "NHL", Country = "Estados Unidos", EspnApiPath = "sports/hockey/nhl", Logo = "https://a.espncdn.com/i/leaguelogos/hockey/500/nhl.png", KnockoutFormatCode = (string?)KnockoutFormatCodes.NhlBestOf7 }
         };
 
         foreach (var l in leaguesToSeed)

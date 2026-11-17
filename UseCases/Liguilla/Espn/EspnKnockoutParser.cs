@@ -18,8 +18,40 @@ public class EspnKnockoutParser : IEspnKnockoutParser
     };
 
     private const string PlayoffSeedStatName = "playoffSeed";
+    private const string PointsStatName = "points";
     private const int MinPlayoffSeed = 1;
-    private const int MaxPlayoffSeed = 7;
+    private const int MaxNflPlayoffSeed = 7;
+    private const int MaxNhlPlayoffSeed = 8;
+
+    private const string EasternConferenceName = "Eastern Conference";
+    private const string WesternConferenceName = "Western Conference";
+    private const string EastConferenceCode = "east";
+    private const string WestConferenceCode = "west";
+
+    private const string AtlanticDivisionName = "Atlantic Division";
+    private const string MetropolitanDivisionName = "Metropolitan Division";
+    private const string CentralDivisionName = "Central Division";
+    private const string PacificDivisionName = "Pacific Division";
+    private const string AtlanticDivisionCode = "atlantic";
+    private const string MetropolitanDivisionCode = "metropolitan";
+    private const string CentralDivisionCode = "central";
+    private const string PacificDivisionCode = "pacific";
+
+    private static readonly IReadOnlyDictionary<string, string> NhlConferenceMap =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [EasternConferenceName] = EastConferenceCode,
+            [WesternConferenceName] = WestConferenceCode
+        };
+
+    private static readonly IReadOnlyDictionary<string, string> NhlDivisionMap =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [AtlanticDivisionName] = AtlanticDivisionCode,
+            [MetropolitanDivisionName] = MetropolitanDivisionCode,
+            [CentralDivisionName] = CentralDivisionCode,
+            [PacificDivisionName] = PacificDivisionCode
+        };
 
     private static readonly IReadOnlyList<EspnKnockoutTie> NoTies = Array.Empty<EspnKnockoutTie>();
 
@@ -62,7 +94,7 @@ public class EspnKnockoutParser : IEspnKnockoutParser
                 foreach (var entry in Items(entries))
                 {
                     var teamId = Text(Prop(Prop(entry, "team"), "id"));
-                    var seed = ReadPlayoffSeed(entry);
+                    var seed = ReadPlayoffSeed(entry, MaxNflPlayoffSeed);
                     if (teamId != null && seed.HasValue)
                         seeds.TryAdd(teamId, new NflPlayoffSeed(conference, seed.Value));
                 }
@@ -77,6 +109,62 @@ public class EspnKnockoutParser : IEspnKnockoutParser
         return seeds;
     }
 
+    public IReadOnlyDictionary<string, NhlPlayoffSeed> ParseNhlPlayoffSeeds(string standingsJson)
+    {
+        var seeds = new Dictionary<string, NhlPlayoffSeed>();
+        if (string.IsNullOrWhiteSpace(standingsJson)) return seeds;
+
+        try
+        {
+            using var document = JsonDocument.Parse(standingsJson);
+            foreach (var conferenceNode in Items(Prop(document.RootElement, "children")))
+            {
+                var conference = NhlConferenceOf(Text(Prop(conferenceNode, "name")));
+                if (conference == null) continue;
+
+                foreach (var divisionNode in Items(Prop(conferenceNode, "children")))
+                {
+                    var division = NhlDivisionOf(Text(Prop(divisionNode, "name")));
+                    if (division == null) continue;
+
+                    var qualifiers = new List<NhlDivisionQualifier>();
+                    var entries = Prop(Prop(divisionNode, "standings"), "entries");
+                    foreach (var entry in Items(entries))
+                    {
+                        var teamId = Text(Prop(Prop(entry, "team"), "id"));
+                        var seed = ReadPlayoffSeed(entry, MaxNhlPlayoffSeed);
+                        if (string.IsNullOrWhiteSpace(teamId) || !seed.HasValue) continue;
+
+                        var points = ReadStatNumber(entry, PointsStatName) ?? double.MinValue;
+                        qualifiers.Add(new NhlDivisionQualifier(teamId, seed.Value, points));
+                    }
+
+                    if (qualifiers.Count == 0) continue;
+
+                    var winnerTeamId = qualifiers
+                        .OrderByDescending(q => q.Points)
+                        .ThenBy(q => q.Seed)
+                        .First()
+                        .TeamId;
+
+                    foreach (var qualifier in qualifiers)
+                    {
+                        seeds.TryAdd(
+                            qualifier.TeamId,
+                            new NhlPlayoffSeed(conference, division, qualifier.Seed, qualifier.TeamId == winnerTeamId));
+                    }
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // JSON mal formado: devolvemos diccionario vacío sin interrumpir el sync.
+            return new Dictionary<string, NhlPlayoffSeed>();
+        }
+
+        return seeds;
+    }
+
     private static string? NflConferenceOf(string? groupName)
     {
         if (groupName == null) return null;
@@ -85,17 +173,29 @@ public class EspnKnockoutParser : IEspnKnockoutParser
         return null;
     }
 
-    private static int? ReadPlayoffSeed(JsonElement entry)
+    private static string? NhlConferenceOf(string? groupName) =>
+        groupName != null && NhlConferenceMap.TryGetValue(groupName, out var code) ? code : null;
+
+    private static string? NhlDivisionOf(string? groupName) =>
+        groupName != null && NhlDivisionMap.TryGetValue(groupName, out var code) ? code : null;
+
+    private static int? ReadPlayoffSeed(JsonElement entry, int maxSeed)
+    {
+        var raw = ReadStatNumber(entry, PlayoffSeedStatName);
+        if (!raw.HasValue) return null;
+
+        var seed = (int)raw.Value;
+        return seed == raw.Value && seed >= MinPlayoffSeed && seed <= maxSeed ? seed : null;
+    }
+
+    private static double? ReadStatNumber(JsonElement entry, string statName)
     {
         foreach (var stat in Items(Prop(entry, "stats")))
         {
-            if (Text(Prop(stat, "name")) != PlayoffSeedStatName) continue;
+            if (Text(Prop(stat, "name")) != statName) continue;
 
             var value = Prop(stat, "value");
-            if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var raw)) return null;
-
-            var seed = (int)raw;
-            return seed == raw && seed is >= MinPlayoffSeed and <= MaxPlayoffSeed ? seed : null;
+            return value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var raw) ? raw : null;
         }
 
         return null;
@@ -283,4 +383,6 @@ public class EspnKnockoutParser : IEspnKnockoutParser
     }
 
     private sealed record ParsedEvent(EspnKnockoutTie Tie, DateTime? Date);
+
+    private sealed record NhlDivisionQualifier(string TeamId, int Seed, double Points);
 }

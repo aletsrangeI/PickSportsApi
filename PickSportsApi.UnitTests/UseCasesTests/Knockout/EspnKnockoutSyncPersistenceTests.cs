@@ -106,11 +106,14 @@ public class EspnKnockoutSyncPersistenceTests : IDisposable
 
     private sealed class StubHandler : HttpMessageHandler
     {
-        private readonly string _body;
+        private readonly string _scoreboard;
 
-        public StubHandler(string body) => _body = body;
+        public StubHandler(string scoreboard) => _scoreboard = scoreboard;
 
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(_body) });
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.RequestUri!.AbsolutePath.Contains("standings") ? Fixture("nhl-standings-2026-level3") : _scoreboard;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+        }
     }
 }

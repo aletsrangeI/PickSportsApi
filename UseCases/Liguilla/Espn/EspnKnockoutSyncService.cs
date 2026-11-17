@@ -27,6 +27,10 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
     private const string DivisionalRound = "DIV";
     private const int TopSeed = 1;
 
+    private const string FirstRoundCode = "R1";
+    private const int NodesPerDivision = 2;
+    private static readonly string[] NhlDivisionOrder = ["atlantic", "metropolitan", "central", "pacific"];
+
     private readonly IUnitOfWork _unitOfWork;
     private readonly IKnockoutStrategyResolver _resolver;
     private readonly IEspnKnockoutParser _parser;
@@ -59,7 +63,7 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
         if (season == null) return 0;
 
         IReadOnlyList<EspnKnockoutTie> ties;
-        IReadOnlyDictionary<string, NflPlayoffSeed> seeds;
+        IReadOnlyDictionary<string, TeamSeed> seeds;
         SeasonWindow? espnWindow;
         try
         {
@@ -90,10 +94,12 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
         ties = ties.Where(t => IsInSeasonWindow(t, start.Value, end.Value)).ToList();
         if (ties.Count == 0) return 0;
 
-        // NFL depende de las siembras de standings: sin ellas no se siembra ni resuelve nada (se reintenta en el siguiente ciclo).
-        if (strategy.FormatCode == KnockoutFormatCodes.NflReseededSingleGame && seeds.Count == 0)
+        // NFL y NHL dependen de las siembras de standings: sin ellas no se siembra ni resuelve nada (se reintenta en el siguiente ciclo).
+        if (UsesStandingsSeeds(strategy.FormatCode) && seeds.Count == 0)
         {
-            _logger.LogWarning("[EspnKnockoutSync] Sin siembras NFL de standings para la liga {LeagueId}; se reintentara en el siguiente ciclo.", leagueId);
+            _logger.LogWarning(
+                "[EspnKnockoutSync] Sin siembras de standings ({FormatCode}) para la liga {LeagueId}; se reintentara en el siguiente ciclo.",
+                strategy.FormatCode, leagueId);
             return 0;
         }
 
@@ -156,7 +162,13 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
 
     // ── Descarga ──────────────────────────────────────────────────────────────
 
-    private async Task<(IReadOnlyList<EspnKnockoutTie> Ties, IReadOnlyDictionary<string, NflPlayoffSeed> Seeds, SeasonWindow? Window)> FetchAsync(
+    private static bool UsesStandingsSeeds(string formatCode) =>
+        formatCode is KnockoutFormatCodes.NflReseededSingleGame or KnockoutFormatCodes.NhlBestOf7;
+
+    /// <summary>Siembra de un equipo en standings: conferencia, division (solo NHL) y seed de conferencia.</summary>
+    private sealed record TeamSeed(string Conference, string? Division, int Seed, bool IsDivisionWinner = false);
+
+    private async Task<(IReadOnlyList<EspnKnockoutTie> Ties, IReadOnlyDictionary<string, TeamSeed> Seeds, SeasonWindow? Window)> FetchAsync(
         League league, Season season, string formatCode, CancellationToken ct)
     {
         var (sport, leagueCode) = ResolveEspnPath(league);
@@ -178,12 +190,20 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             }
         }
 
-        IReadOnlyDictionary<string, NflPlayoffSeed> seeds = new Dictionary<string, NflPlayoffSeed>();
+        IReadOnlyDictionary<string, TeamSeed> seeds = new Dictionary<string, TeamSeed>();
         if (formatCode == KnockoutFormatCodes.NflReseededSingleGame)
         {
             var standings = await FetchJsonAsync($"{StandingsBase}/{sport}/{leagueCode}/standings?season={season.Year}", ct);
             if (standings != null)
-                seeds = _parser.ParseNflPlayoffSeeds(standings);
+                seeds = _parser.ParseNflPlayoffSeeds(standings)
+                    .ToDictionary(p => p.Key, p => new TeamSeed(p.Value.Conference, null, p.Value.Seed));
+        }
+        else if (formatCode == KnockoutFormatCodes.NhlBestOf7)
+        {
+            var standings = await FetchJsonAsync($"{StandingsBase}/{sport}/{leagueCode}/standings?season={season.Year}&level=3", ct);
+            if (standings != null)
+                seeds = _parser.ParseNhlPlayoffSeeds(standings)
+                    .ToDictionary(p => p.Key, p => new TeamSeed(p.Value.Conference, p.Value.Division, p.Value.Seed, p.Value.IsDivisionWinner));
         }
 
         // Solo se pide la ventana vigente (scoreboard sin "dates") cuando la temporada no trae ambas fechas.
@@ -261,7 +281,7 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
         context.Created.Add(node);
     }
 
-    private void ApplyTie(SyncContext context, EspnKnockoutTie tie, IReadOnlyDictionary<string, NflPlayoffSeed> seeds)
+    private void ApplyTie(SyncContext context, EspnKnockoutTie tie, IReadOnlyDictionary<string, TeamSeed> seeds)
     {
         var roundCode = RoundCodeOf(context.Strategy.FormatCode, tie);
         if (roundCode == null) return;
@@ -282,7 +302,7 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             return;
         }
 
-        var node = FindNode(context, roundCode, tie, home, away);
+        var node = FindNode(context, roundCode, tie, home, away, seeds);
         if (node == null)
         {
             _logger.LogWarning("[EspnKnockoutSync] Sin nodo libre en {Round} para el cruce {GroupKey}.", roundCode, tie.GroupKey);
@@ -296,7 +316,9 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
         Resolve(context, node, tie);
     }
 
-    private LiguillaNode? FindNode(SyncContext context, string roundCode, EspnKnockoutTie tie, Team home, Team away)
+    private LiguillaNode? FindNode(
+        SyncContext context, string roundCode, EspnKnockoutTie tie, Team home, Team away,
+        IReadOnlyDictionary<string, TeamSeed> seeds)
     {
         var inRound = context.Nodes.Where(n => n.Round == roundCode).ToList();
 
@@ -311,10 +333,43 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             && new[] { n.TeamAId, n.TeamBId }.Where(id => id.HasValue).All(id => tieTeamIds.Contains(id!.Value)));
         if (seeded != null) return seeded;
 
+        // NHL R1: la llave es fija, la serie va al nodo de su bracket de division y no al primero libre.
+        if (context.Strategy.FormatCode == KnockoutFormatCodes.NhlBestOf7 && roundCode == FirstRoundCode)
+        {
+            var offset = NhlFirstRoundOffset(SeedOf(seeds, home), SeedOf(seeds, away));
+            if (offset.HasValue)
+            {
+                var slot = context.RoundStart[roundCode] + offset.Value;
+                var target = inRound.FirstOrDefault(n => n.NodeNumber == slot);
+                return target != null && IsFree(target) ? target : null;
+            }
+        }
+
         var blockIndex = BlockIndexOf(tie.Conference);
         var candidates = inRound.Where(n => IsFree(n) && (blockIndex == null || n.Conference == tie.Conference));
         return candidates.OrderBy(n => n.NodeNumber).FirstOrDefault()
                ?? inRound.Where(IsFree).OrderBy(n => n.NodeNumber).FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Posicion (0..7) de una serie de R1 de NHL. Con un equipo ganador de division (IsDivisionWinner; el seed de conferencia NO lo determina)
+    /// va al nodo "ganador vs comodin" de SU division; si ninguno lo es y comparten division es el "2o vs 3o". Null si no se puede clasificar.
+    /// </summary>
+    private static int? NhlFirstRoundOffset(TeamSeed? first, TeamSeed? second)
+    {
+        var winner = new[] { first, second }.FirstOrDefault(s => s is { IsDivisionWinner: true });
+        if (winner != null)
+        {
+            var winnerDivision = Array.IndexOf(NhlDivisionOrder, winner.Division);
+            return winnerDivision < 0 ? null : winnerDivision * NodesPerDivision;
+        }
+
+        if (first == null || second == null || first.Division == null
+            || !string.Equals(first.Division, second.Division, StringComparison.Ordinal))
+            return null;
+
+        var division = Array.IndexOf(NhlDivisionOrder, first.Division);
+        return division < 0 ? null : division * NodesPerDivision + 1;
     }
 
     private static bool IsFree(LiguillaNode node) =>
@@ -322,7 +377,7 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
 
     private static void FillNode(
         SyncContext context, LiguillaNode node, EspnKnockoutTie tie, Team home, Team away,
-        IReadOnlyDictionary<string, NflPlayoffSeed> seeds)
+        IReadOnlyDictionary<string, TeamSeed> seeds)
     {
         var changed = false;
 
@@ -355,8 +410,8 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
 
         if (seeds.Count > 0)
         {
-            node.SeedA ??= SeedOf(seeds, node.TeamA ?? home);
-            node.SeedB ??= SeedOf(seeds, node.TeamB ?? away);
+            node.SeedA ??= SeedOf(seeds, node.TeamA ?? home)?.Seed;
+            node.SeedB ??= SeedOf(seeds, node.TeamB ?? away)?.Seed;
         }
 
         if (!node.KickoffUtc.HasValue && tie.KickoffUtc.HasValue)
@@ -368,14 +423,14 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
         if (changed) context.Touched.Add(node);
     }
 
-    private static int? SeedOf(IReadOnlyDictionary<string, NflPlayoffSeed> seeds, Team team) =>
-        seeds.TryGetValue(team.EspnTeamId, out var seed) ? seed.Seed : null;
+    private static TeamSeed? SeedOf(IReadOnlyDictionary<string, TeamSeed> seeds, Team team) =>
+        seeds.TryGetValue(team.EspnTeamId, out var seed) ? seed : null;
 
     /// <summary>
     /// NFL: el seed 1 de cada conferencia descansa en Wild Card, asi que se pre-siembra como TeamA (SeedA = 1)
     /// del primer nodo DIV de su conferencia. Idempotente: no pisa nodos con equipos, llave ESPN o ya resueltos.
     /// </summary>
-    private static void PreSeedTopSeeds(SyncContext context, IReadOnlyDictionary<string, NflPlayoffSeed> seeds)
+    private static void PreSeedTopSeeds(SyncContext context, IReadOnlyDictionary<string, TeamSeed> seeds)
     {
         if (context.Strategy.FormatCode != KnockoutFormatCodes.NflReseededSingleGame) return;
 

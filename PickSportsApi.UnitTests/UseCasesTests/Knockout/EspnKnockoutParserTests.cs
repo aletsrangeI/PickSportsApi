@@ -168,4 +168,98 @@ public class EspnKnockoutParserTests
 
         seeds.Should().BeEmpty();
     }
+
+    [Fact]
+    public void ParseNhlPlayoffSeeds_RealStandings_ReturnsSixteenSeededTeamsWithEightPerConference()
+    {
+        var json = Fixture("nhl-standings-2026-level3");
+
+        var seeds = _parser.ParseNhlPlayoffSeeds(json);
+
+        seeds.Should().HaveCount(16);
+        seeds.Values.Count(s => s.Conference == "east").Should().Be(8);
+        seeds.Values.Count(s => s.Conference == "west").Should().Be(8);
+        seeds.Values.Should().OnlyContain(s => s.Seed >= 1 && s.Seed <= 8);
+    }
+
+    [Fact]
+    public void ParseNhlPlayoffSeeds_RealStandings_MapsConferenceDivisionAndSeedForTopSeeds()
+    {
+        var json = Fixture("nhl-standings-2026-level3");
+
+        var seeds = _parser.ParseNhlPlayoffSeeds(json);
+
+        seeds["7"].Should().Be(new NhlPlayoffSeed("east", "metropolitan", 1, true));
+        seeds["17"].Should().Be(new NhlPlayoffSeed("west", "central", 1, true));
+    }
+
+    [Fact]
+    public void ParseNhlPlayoffSeeds_RealStandings_IdentifiesExactFourDivisionWinners()
+    {
+        var json = Fixture("nhl-standings-2026-level3");
+
+        var seeds = _parser.ParseNhlPlayoffSeeds(json);
+
+        var divisionWinners = seeds.Where(kv => kv.Value.IsDivisionWinner).Select(kv => kv.Key).ToList();
+        divisionWinners.Should().HaveCount(4);
+        divisionWinners.Should().BeEquivalentTo(new[] { "2", "7", "17", "37" });
+
+        seeds["2"].Should().Be(new NhlPlayoffSeed("east", "atlantic", 2, true));
+        seeds["7"].Should().Be(new NhlPlayoffSeed("east", "metropolitan", 1, true));
+        seeds["17"].Should().Be(new NhlPlayoffSeed("west", "central", 1, true));
+        seeds["37"].Should().Be(new NhlPlayoffSeed("west", "pacific", 4, true));
+        seeds["9"].Should().Be(new NhlPlayoffSeed("west", "central", 2, false));
+    }
+
+    [Fact]
+    public void ParseNhlPlayoffSeeds_TiedPointsInSameDivision_PicksLowestSeedAsWinner()
+    {
+        const string json = """
+            {
+              "children": [
+                {
+                  "name": "Eastern Conference",
+                  "children": [
+                    {
+                      "name": "Atlantic Division",
+                      "standings": {
+                        "entries": [
+                          {
+                            "team": { "id": "20" },
+                            "stats": [
+                              { "name": "playoffSeed", "value": 5 },
+                              { "name": "points", "value": 100 }
+                            ]
+                          },
+                          {
+                            "team": { "id": "10" },
+                            "stats": [
+                              { "name": "playoffSeed", "value": 3 },
+                              { "name": "points", "value": 100 }
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+            """;
+
+        var seeds = _parser.ParseNhlPlayoffSeeds(json);
+
+        seeds.Should().HaveCount(2);
+        seeds["10"].Should().Be(new NhlPlayoffSeed("east", "atlantic", 3, true));
+        seeds["20"].Should().Be(new NhlPlayoffSeed("east", "atlantic", 5, false));
+    }
+
+    [Fact]
+    public void ParseNhlPlayoffSeeds_InvalidJson_ReturnsEmpty()
+    {
+        var act = () => _parser.ParseNhlPlayoffSeeds("{no");
+
+        act.Should().NotThrow();
+        act().Should().BeEmpty();
+    }
 }
