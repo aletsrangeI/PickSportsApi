@@ -41,6 +41,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<QuinielaChallengeParticipant> QuinielaChallengeParticipants { get; set; }
     public DbSet<PickAuditLog> PickAuditLogs { get; set; }
     public DbSet<PushSubscription> PushSubscriptions { get; set; }
+    public DbSet<UserSession> UserSessions { get; set; }
     public DbSet<PushNotificationLog> PushNotificationLogs { get; set; }
     public DbSet<EspnHealthLog> EspnHealthLogs { get; set; }
     public DbSet<LiguillaNode> LiguillaNodes { get; set; }

@@ -12,6 +12,15 @@ namespace UseCases.Auth;
 
 public class AuthApplication : IAuthApplication
 {
+    /// <summary>Vida del refresh token; se renueva en cada refresh (sesion deslizante).</summary>
+    private const int RefreshTokenLifetimeDays = 60;
+
+    /// <summary>Tiempo en que se sigue aceptando el refresh token anterior tras una rotacion.</summary>
+    private const int RefreshGraceSeconds = 60;
+
+    /// <summary>Maximo de dispositivos con sesion abierta por usuario; al pasarse se descartan los menos usados.</summary>
+    private const int MaxSessionsPerUser = 10;
+
     private readonly IUnitOfWork _unitOfWork;
     private readonly IJwtTokenGenerator _jwtTokenGenerator;
     private readonly PasswordHasher _passwordHasher;
@@ -94,11 +103,7 @@ public class AuthApplication : IAuthApplication
         }
 
         var token = _jwtTokenGenerator.GenerateToken(user);
-        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
-        user.RefreshToken = refreshToken;
-        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-        await _unitOfWork.Users.UpdateAsync(user);
-        await _unitOfWork.Save();
+        var refreshToken = await CreateSessionAsync(user);
 
         var userProfile = _mapper.Map<UserProfileDto>(user);
 
@@ -158,11 +163,7 @@ public class AuthApplication : IAuthApplication
         }
 
         var token = _jwtTokenGenerator.GenerateToken(user);
-        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
-        user.RefreshToken = refreshToken;
-        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-        await _unitOfWork.Users.UpdateAsync(user);
-        await _unitOfWork.Save();
+        var refreshToken = await CreateSessionAsync(user);
 
         var userProfile = _mapper.Map<UserProfileDto>(user);
 
@@ -310,11 +311,7 @@ public class AuthApplication : IAuthApplication
             await _unitOfWork.Save();
 
             var jwtToken = _jwtTokenGenerator.GenerateToken(existingUserWithEmail);
-            var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
-            existingUserWithEmail.RefreshToken = refreshToken;
-            existingUserWithEmail.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-            await _unitOfWork.Users.UpdateAsync(existingUserWithEmail);
-            await _unitOfWork.Save();
+            var refreshToken = await CreateSessionAsync(existingUserWithEmail);
 
             var userProfile = _mapper.Map<UserProfileDto>(existingUserWithEmail);
 
@@ -364,11 +361,7 @@ public class AuthApplication : IAuthApplication
         await _unitOfWork.Save();
 
         var token = _jwtTokenGenerator.GenerateToken(user);
-        var newRefreshToken = _jwtTokenGenerator.GenerateRefreshToken();
-        user.RefreshToken = newRefreshToken;
-        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-        await _unitOfWork.Users.UpdateAsync(user);
-        await _unitOfWork.Save();
+        var newRefreshToken = await CreateSessionAsync(user);
 
         var profile = _mapper.Map<UserProfileDto>(user);
 
@@ -511,11 +504,7 @@ public class AuthApplication : IAuthApplication
         await _unitOfWork.Save();
 
         var jwtToken = _jwtTokenGenerator.GenerateToken(currentUser);
-        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
-        currentUser.RefreshToken = refreshToken;
-        currentUser.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-        await _unitOfWork.Users.UpdateAsync(currentUser);
-        await _unitOfWork.Save();
+        var refreshToken = await CreateSessionAsync(currentUser);
 
         var profile = _mapper.Map<UserProfileDto>(currentUser);
 
@@ -641,58 +630,119 @@ public class AuthApplication : IAuthApplication
         return response;
     }
 
+    /// <summary>Crea la sesion de un dispositivo y devuelve su refresh token. No toca las sesiones de otros dispositivos.</summary>
+    private async Task<string> CreateSessionAsync(User user)
+    {
+        var now = DateTime.UtcNow;
+        var refreshToken = _jwtTokenGenerator.GenerateRefreshToken();
+
+        await _unitOfWork.UserSessions.InsertAsync(new UserSession
+        {
+            UserId = user.Id,
+            RefreshToken = refreshToken,
+            ExpiresAt = now.AddDays(RefreshTokenLifetimeDays),
+            CreatedAt = now,
+            LastUsedAt = now
+        });
+        await _unitOfWork.UserSessions.PruneAsync(user.Id, MaxSessionsPerUser, now);
+
+        return refreshToken;
+    }
+
     public async Task<Response<AuthResponseDto>> RefreshAsync(RefreshRequestDto request)
     {
         var response = new Response<AuthResponseDto>();
-        
+
+        Response<AuthResponseDto> Fail(string message)
+        {
+            response.isSuccess = false;
+            response.Message = message;
+            return response;
+        }
+
         if (string.IsNullOrWhiteSpace(request.AccessToken) || string.IsNullOrWhiteSpace(request.RefreshToken))
         {
-            response.isSuccess = false;
-            response.Message = "Tokens no proporcionados.";
-            return response;
+            return Fail("Tokens no proporcionados.");
         }
 
-        // Extraer UserId desde el AccessToken sin validar expiración (el token ya expiró)
-        var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
-        if (!handler.CanReadToken(request.AccessToken))
+        // El access token ya expiro, pero su firma debe ser nuestra: de el sale el usuario.
+        var principal = _jwtTokenGenerator.GetPrincipalFromExpiredToken(request.AccessToken);
+        if (principal == null)
         {
-            response.isSuccess = false;
-            response.Message = "AccessToken inválido.";
-            return response;
+            return Fail("AccessToken inválido.");
         }
 
-        var jwtToken = handler.ReadJwtToken(request.AccessToken);
-        var nameIdentifierClaim = jwtToken.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "nameid" || c.Type == "name");
+        var nameIdentifierClaim = principal.Claims.FirstOrDefault(c =>
+            c.Type == System.Security.Claims.ClaimTypes.NameIdentifier || c.Type == "sub" || c.Type == "nameid"
+            || c.Type == System.Security.Claims.ClaimTypes.Name || c.Type == "name");
         if (nameIdentifierClaim == null || !int.TryParse(nameIdentifierClaim.Value, out var userId))
         {
-            response.isSuccess = false;
-            response.Message = "AccessToken no contiene identificador de usuario.";
-            return response;
+            return Fail("AccessToken no contiene identificador de usuario.");
         }
 
-        var user = await _unitOfWork.Users.GetAsync(userId);
-        if (user == null || user.RefreshToken != request.RefreshToken || user.RefreshTokenExpiryTime <= DateTime.UtcNow)
+        var now = DateTime.UtcNow;
+        var session = await _unitOfWork.UserSessions.GetByRefreshTokenAsync(request.RefreshToken);
+        User? user;
+        string newRefreshToken;
+
+        if (session != null)
         {
-            response.isSuccess = false;
-            response.Message = "RefreshToken inválido o expirado.";
-            return response;
-        }
+            var isCurrent = session.RefreshToken == request.RefreshToken;
+            // Otra ventana (p. ej. la abierta por una notificacion push) acaba de rotar el token con este mismo valor.
+            var isWithinGrace = !isCurrent
+                && session.PreviousRefreshToken == request.RefreshToken
+                && session.PreviousRefreshTokenValidUntil > now;
 
-        // Emit new tokens
-        var newAccessToken = _jwtTokenGenerator.GenerateToken(user);
-        var newRefreshToken = _jwtTokenGenerator.GenerateRefreshToken();
-        
-        user.RefreshToken = newRefreshToken;
-        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
-        
-        await _unitOfWork.Users.UpdateAsync(user);
-        await _unitOfWork.Save();
+            if (session.UserId != userId || session.ExpiresAt <= now || (!isCurrent && !isWithinGrace))
+            {
+                return Fail("RefreshToken inválido o expirado.");
+            }
+
+            user = await _unitOfWork.Users.GetAsync(userId);
+            if (user == null || !user.Active)
+            {
+                return Fail("RefreshToken inválido o expirado.");
+            }
+
+            // Dentro de la gracia no se rota otra vez: se entrega el token vigente para que
+            // ambas ventanas terminen con el mismo refresh token.
+            if (!isWithinGrace)
+            {
+                session.PreviousRefreshToken = session.RefreshToken;
+                session.PreviousRefreshTokenValidUntil = now.AddSeconds(RefreshGraceSeconds);
+                session.RefreshToken = _jwtTokenGenerator.GenerateRefreshToken();
+                session.ExpiresAt = now.AddDays(RefreshTokenLifetimeDays);
+            }
+
+            session.LastUsedAt = now;
+            await _unitOfWork.UserSessions.UpdateAsync(session);
+            await _unitOfWork.Save();
+            newRefreshToken = session.RefreshToken;
+        }
+        else
+        {
+            // Sesiones emitidas antes de UserSessions: el refresh token vivia en la fila del usuario.
+            user = await _unitOfWork.Users.GetAsync(userId);
+            if (user == null || !user.Active
+                || string.IsNullOrEmpty(user.RefreshToken)
+                || user.RefreshToken != request.RefreshToken
+                || user.RefreshTokenExpiryTime <= now)
+            {
+                return Fail("RefreshToken inválido o expirado.");
+            }
+
+            newRefreshToken = await CreateSessionAsync(user);
+            user.RefreshToken = null;
+            user.RefreshTokenExpiryTime = null;
+            await _unitOfWork.Users.UpdateAsync(user);
+            await _unitOfWork.Save();
+        }
 
         response.isSuccess = true;
         response.Message = "Token renovado exitosamente.";
         response.Data = new AuthResponseDto
         {
-            Token = newAccessToken,
+            Token = _jwtTokenGenerator.GenerateToken(user),
             RefreshToken = newRefreshToken,
             User = _mapper.Map<UserProfileDto>(user)
         };

@@ -17,6 +17,7 @@ public interface IUnitOfWork : IDisposable
     IChallengeRepository Challenges { get; }
     IPickAuditLogRepository PickAuditLogs { get; }
     IPushSubscriptionRepository PushSubscriptions { get; }
+    IUserSessionRepository UserSessions { get; }
     IPushNotificationLogRepository PushNotificationLogs { get; }
     IEspnHealthLogRepository EspnHealthLogs { get; }
     ILiguillaRepository Liguilla { get; }

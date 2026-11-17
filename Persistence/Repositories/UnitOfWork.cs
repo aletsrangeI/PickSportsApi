@@ -36,6 +36,7 @@ public class UnitOfWork : IUnitOfWork
         SeasonWrappedSnapshots = new SeasonWrappedSnapshotRepository(_dbContext);
         Achievements = new AchievementRepository(_dbContext);
         Duels = new DuelRepository(_dbContext);
+        UserSessions = new UserSessionRepository(_dbContext);
     }
 
     public IUserRepository Users { get; }
@@ -53,6 +54,7 @@ public class UnitOfWork : IUnitOfWork
     public IChallengeRepository Challenges { get; }
     public IPickAuditLogRepository PickAuditLogs { get; }
     public IPushSubscriptionRepository PushSubscriptions { get; }
+    public IUserSessionRepository UserSessions { get; }
     public IPushNotificationLogRepository PushNotificationLogs { get; }
     public IEspnHealthLogRepository EspnHealthLogs { get; }
     public ILiguillaRepository Liguilla { get; }

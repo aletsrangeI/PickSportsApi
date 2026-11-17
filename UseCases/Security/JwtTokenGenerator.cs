@@ -58,6 +58,43 @@ public class JwtTokenGenerator : IJwtTokenGenerator
         return tokenHandler.WriteToken(token);
     }
 
+    public ClaimsPrincipal? GetPrincipalFromExpiredToken(string token)
+    {
+        var secret = _configuration["Config:Secret"];
+        if (string.IsNullOrWhiteSpace(secret) || string.IsNullOrWhiteSpace(token))
+        {
+            return null;
+        }
+
+        var parameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.ASCII.GetBytes(secret)),
+            ValidateIssuer = true,
+            ValidIssuer = _configuration["Config:Issuer"] ?? "OrionSys",
+            ValidateAudience = true,
+            ValidAudience = _configuration["Config:Audience"] ?? "OrionSys",
+            ValidateLifetime = false, // el token ya expiro: solo importa que lo hayamos firmado nosotros
+            ClockSkew = TimeSpan.Zero
+        };
+
+        try
+        {
+            var principal = new JwtSecurityTokenHandler().ValidateToken(token, parameters, out var validated);
+            if (validated is not JwtSecurityToken jwt ||
+                !jwt.Header.Alg.Equals(SecurityAlgorithms.HmacSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return principal;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     public string GenerateRefreshToken()
     {
         var randomNumber = new byte[32];

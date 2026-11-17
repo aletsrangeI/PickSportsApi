@@ -28,4 +28,5 @@ public class User : BaseAuditableEntity
     public ICollection<Quiniela> QuinielasOwned { get; set; } = new List<Quiniela>();
     public ICollection<QuinielaMember> Memberships { get; set; } = new List<QuinielaMember>();
     public ICollection<PushSubscription> PushSubscriptions { get; set; } = new List<PushSubscription>();
+    public ICollection<UserSession> Sessions { get; set; } = new List<UserSession>();
 }

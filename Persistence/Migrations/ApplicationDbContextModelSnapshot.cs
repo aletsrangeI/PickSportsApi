@@ -2095,6 +2095,50 @@ namespace Persistence.Migrations
                     b.ToTable("UserAvatarFiles", (string)null);
                 });
 
+            modelBuilder.Entity("Domain.Entities.UserSession", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<DateTime>("LastUsedAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("PreviousRefreshToken")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("PreviousRefreshTokenValidUntil")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("RefreshToken")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PreviousRefreshToken");
+
+                    b.HasIndex("RefreshToken")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("UserSessions", (string)null);
+                });
+
             modelBuilder.Entity("Domain.Entities.Week", b =>
                 {
                     b.Property<int>("Id")
@@ -2818,6 +2862,17 @@ namespace Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Domain.Entities.UserSession", b =>
+                {
+                    b.HasOne("Domain.Entities.User", "User")
+                        .WithMany("Sessions")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("Domain.Entities.Week", b =>
                 {
                     b.HasOne("Domain.Entities.Season", "Season")
@@ -2978,6 +3033,8 @@ namespace Persistence.Migrations
                     b.Navigation("PushSubscriptions");
 
                     b.Navigation("QuinielasOwned");
+
+                    b.Navigation("Sessions");
                 });
 
             modelBuilder.Entity("Domain.Entities.Week", b =>

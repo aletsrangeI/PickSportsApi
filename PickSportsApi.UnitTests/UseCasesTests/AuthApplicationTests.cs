@@ -24,6 +24,9 @@ public class AuthApplicationTests
     {
         _unitOfWorkMock = new Mock<IUnitOfWork>();
         _jwtMock = new Mock<IJwtTokenGenerator>();
+        _jwtMock.Setup(j => j.GenerateRefreshToken()).Returns("generated-refresh-token");
+        // Cada login/registro/claim crea una sesion por dispositivo.
+        _unitOfWorkMock.Setup(u => u.UserSessions.InsertAsync(It.IsAny<UserSession>())).ReturnsAsync(true);
         _passwordHasher = new PasswordHasher();
 
         _mapper = new AppMapper();
@@ -478,5 +481,218 @@ public class AuthApplicationTests
         Assert.False(string.IsNullOrWhiteSpace(result.Data.RefreshToken));
         Assert.NotEqual(refreshToken, result.Data.RefreshToken); // Rotated
         Assert.Equal(42, result.Data.User.Id);
+    }
+
+    private const string RefreshTestSecret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    private static string CreateExpiredAccessToken(int userId, string secret = RefreshTestSecret)
+    {
+        var key = System.Text.Encoding.ASCII.GetBytes(secret);
+        var descriptor = new Microsoft.IdentityModel.Tokens.SecurityTokenDescriptor
+        {
+            Subject = new System.Security.Claims.ClaimsIdentity(new[]
+            {
+                new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, userId.ToString())
+            }),
+            NotBefore = DateTime.UtcNow.AddHours(-3),
+            IssuedAt = DateTime.UtcNow.AddHours(-3),
+            Expires = DateTime.UtcNow.AddHours(-2),
+            SigningCredentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(
+                new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(key),
+                Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256Signature),
+            Issuer = "OrionSys",
+            Audience = "OrionSys"
+        };
+        var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+        return handler.WriteToken(handler.CreateToken(descriptor));
+    }
+
+    private static User CreateRefreshUser(int id = 42) => new()
+    {
+        Id = id,
+        Username = $"user{id}",
+        Email = $"user{id}@test.com",
+        DisplayName = $"User {id}",
+        Active = true
+    };
+
+    private static UserSession CreateSession(int userId, string refreshToken, int expiresInDays = 30) => new()
+    {
+        Id = userId * 100 + refreshToken.Length,
+        UserId = userId,
+        RefreshToken = refreshToken,
+        ExpiresAt = DateTime.UtcNow.AddDays(expiresInDays),
+        CreatedAt = DateTime.UtcNow.AddDays(-1),
+        LastUsedAt = DateTime.UtcNow.AddDays(-1)
+    };
+
+    private AuthApplication BuildRefreshApp(List<User> users, List<UserSession> sessions)
+    {
+        var configMock = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
+        configMock.Setup(c => c["Config:Secret"]).Returns(RefreshTestSecret);
+        configMock.Setup(c => c["Config:Issuer"]).Returns("OrionSys");
+        configMock.Setup(c => c["Config:Audience"]).Returns("OrionSys");
+
+        _unitOfWorkMock.Setup(u => u.Users.GetAsync(It.IsAny<int>()))
+            .ReturnsAsync((int id) => users.FirstOrDefault(x => x.Id == id)!);
+        _unitOfWorkMock.Setup(u => u.Users.UpdateAsync(It.IsAny<User>())).ReturnsAsync(true);
+        _unitOfWorkMock.Setup(u => u.UserSessions.GetByRefreshTokenAsync(It.IsAny<string>()))
+            .ReturnsAsync((string token) => sessions.FirstOrDefault(s => s.RefreshToken == token || s.PreviousRefreshToken == token));
+        _unitOfWorkMock.Setup(u => u.UserSessions.UpdateAsync(It.IsAny<UserSession>())).ReturnsAsync(true);
+        _unitOfWorkMock.Setup(u => u.UserSessions.InsertAsync(It.IsAny<UserSession>()))
+            .Callback<UserSession>(sessions.Add).ReturnsAsync(true);
+        _unitOfWorkMock.Setup(u => u.Save(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+
+        return new AuthApplication(
+            _unitOfWorkMock.Object,
+            new UseCases.Security.JwtTokenGenerator(configMock.Object),
+            _passwordHasher,
+            _mapper,
+            _registerValidator,
+            _loginValidator);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_TwoWindowsRefreshingWithSameToken_BothSucceedAndShareTheSameNewToken()
+    {
+        // Arrange: PWA abierta y ventana abierta por la notificacion renuevan a la vez con el mismo refresh token
+        var session = CreateSession(42, "refresh-1");
+        var app = BuildRefreshApp(new List<User> { CreateRefreshUser() }, new List<UserSession> { session });
+        var request = new RefreshRequestDto { AccessToken = CreateExpiredAccessToken(42), RefreshToken = "refresh-1" };
+
+        // Act
+        var first = await app.RefreshAsync(request);
+        var second = await app.RefreshAsync(request);
+
+        // Assert
+        Assert.True(first.isSuccess, first.Message);
+        Assert.True(second.isSuccess, $"La segunda ventana no deberia perder la sesion: {second.Message}");
+        Assert.Equal(first.Data.RefreshToken, second.Data.RefreshToken);
+        Assert.Equal(first.Data.RefreshToken, session.RefreshToken);
+        Assert.NotEqual("refresh-1", session.RefreshToken);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_PreviousTokenAfterGraceWindow_IsRejected()
+    {
+        // Arrange: el token anterior ya paso su ventana de gracia
+        var session = CreateSession(42, "refresh-2");
+        session.PreviousRefreshToken = "refresh-1";
+        session.PreviousRefreshTokenValidUntil = DateTime.UtcNow.AddSeconds(-1);
+        var app = BuildRefreshApp(new List<User> { CreateRefreshUser() }, new List<UserSession> { session });
+
+        // Act
+        var result = await app.RefreshAsync(new RefreshRequestDto
+        {
+            AccessToken = CreateExpiredAccessToken(42),
+            RefreshToken = "refresh-1"
+        });
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Equal("refresh-2", session.RefreshToken);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ExtendsSessionLifetimeToSixtyDays()
+    {
+        // Arrange
+        var session = CreateSession(42, "refresh-1", expiresInDays: 1);
+        var app = BuildRefreshApp(new List<User> { CreateRefreshUser() }, new List<UserSession> { session });
+
+        // Act
+        var result = await app.RefreshAsync(new RefreshRequestDto
+        {
+            AccessToken = CreateExpiredAccessToken(42),
+            RefreshToken = "refresh-1"
+        });
+
+        // Assert
+        Assert.True(result.isSuccess, result.Message);
+        Assert.True(session.ExpiresAt >= DateTime.UtcNow.AddDays(59),
+            $"La sesion deberia durar ~60 dias y vence en {session.ExpiresAt:o}");
+    }
+
+    [Fact]
+    public async Task RefreshAsync_RefreshingOneDevice_DoesNotInvalidateTheOtherDevice()
+    {
+        // Arrange: el mismo usuario con sesion en Android y en iPhone
+        var android = CreateSession(42, "android-token");
+        var iphone = CreateSession(42, "iphone-token");
+        var app = BuildRefreshApp(new List<User> { CreateRefreshUser() }, new List<UserSession> { android, iphone });
+
+        // Act
+        var androidResult = await app.RefreshAsync(new RefreshRequestDto
+        {
+            AccessToken = CreateExpiredAccessToken(42), RefreshToken = "android-token"
+        });
+        var iphoneResult = await app.RefreshAsync(new RefreshRequestDto
+        {
+            AccessToken = CreateExpiredAccessToken(42), RefreshToken = "iphone-token"
+        });
+
+        // Assert
+        Assert.True(androidResult.isSuccess, androidResult.Message);
+        Assert.True(iphoneResult.isSuccess, $"El iPhone perdio la sesion: {iphoneResult.Message}");
+        Assert.NotEqual(android.RefreshToken, iphone.RefreshToken);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_AccessTokenSignedWithAnotherKey_IsRejected()
+    {
+        // Arrange: token con el userId correcto pero firmado por un tercero
+        var session = CreateSession(42, "refresh-1");
+        var app = BuildRefreshApp(new List<User> { CreateRefreshUser() }, new List<UserSession> { session });
+        var forged = CreateExpiredAccessToken(42, secret: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
+
+        // Act
+        var result = await app.RefreshAsync(new RefreshRequestDto { AccessToken = forged, RefreshToken = "refresh-1" });
+
+        // Assert
+        Assert.False(result.isSuccess);
+        Assert.Equal("refresh-1", session.RefreshToken);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_SessionBelongingToAnotherUser_IsRejected()
+    {
+        // Arrange: el access token es del usuario 42 pero el refresh token es de la sesion del usuario 7
+        var othersSession = CreateSession(7, "refresh-of-7");
+        var app = BuildRefreshApp(
+            new List<User> { CreateRefreshUser(42), CreateRefreshUser(7) },
+            new List<UserSession> { othersSession });
+
+        // Act
+        var result = await app.RefreshAsync(new RefreshRequestDto
+        {
+            AccessToken = CreateExpiredAccessToken(42), RefreshToken = "refresh-of-7"
+        });
+
+        // Assert
+        Assert.False(result.isSuccess);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_LegacyUserRefreshToken_IsPromotedToASession()
+    {
+        // Arrange: sesion emitida antes de UserSessions (el token vive en la fila del usuario)
+        var user = CreateRefreshUser();
+        user.RefreshToken = "legacy-token";
+        user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(3);
+        var sessions = new List<UserSession>();
+        var app = BuildRefreshApp(new List<User> { user }, sessions);
+
+        // Act
+        var result = await app.RefreshAsync(new RefreshRequestDto
+        {
+            AccessToken = CreateExpiredAccessToken(42), RefreshToken = "legacy-token"
+        });
+
+        // Assert
+        Assert.True(result.isSuccess, result.Message);
+        var created = Assert.Single(sessions);
+        Assert.Equal(result.Data.RefreshToken, created.RefreshToken);
+        Assert.NotEqual("legacy-token", created.RefreshToken);
+        Assert.Null(user.RefreshToken);
     }
 }
