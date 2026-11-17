@@ -10,6 +10,12 @@ namespace Persistence.Initialization;
 
 public class DatabaseInitializer
 {
+    /// <summary>Tipo de temporada de ESPN para la temporada regular de la NFL (1 = pretemporada, 2 = regular, 3 = postemporada).</summary>
+    private const int NflRegularSeasonType = 2;
+    private const int NflRegularWeeksCount = 18;
+    /// <summary>Valor por defecto de <c>League.WeeksCount</c>.</summary>
+    private const int DefaultWeeksCount = 17;
+
     private readonly ApplicationDbContext _context;
     private readonly ILogger<DatabaseInitializer> _logger;
 
@@ -170,13 +176,20 @@ public class DatabaseInitializer
         }
 
         var nflLeague = await _context.Leagues.FirstOrDefaultAsync(l => l.Code == "nfl");
+        if (nflLeague != null && nflLeague.WeeksCount == DefaultWeeksCount)
+        {
+            // La temporada regular de la NFL tiene 18 semanas; con 17 la semana 18 se trata como fase final y queda oculta.
+            nflLeague.WeeksCount = NflRegularWeeksCount;
+            await _context.SaveChangesAsync();
+        }
+
         if (nflLeague != null && !await _context.Seasons.AnyAsync(s => s.LeagueId == nflLeague.Id && s.Year == 2026))
         {
             await _context.Seasons.AddAsync(new Season
             {
                 LeagueId = nflLeague.Id,
                 Year = 2026,
-                SeasonType = 1,
+                SeasonType = NflRegularSeasonType,
                 Name = "Temporada Regular 2026",
                 IsCurrent = true,
                 Active = true,

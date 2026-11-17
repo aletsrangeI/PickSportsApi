@@ -82,7 +82,11 @@ public sealed class NhlBestOfSevenStrategy : IKnockoutFormatStrategy
             return FieldTeamIds(nodes, roundCode).ToList();
         }
 
+        // Solo equipos que existen en la llave: un pick ajeno al cuadro no puede avanzar.
+        var firstRoundSlots = FirstRoundSlotByTeam(nodes);
+
         return PicksOfRound(previousPicks, RoundDefinitions[roundIndex - 1].Code)
+            .Where(firstRoundSlots.ContainsKey)
             .Distinct()
             .ToList();
     }
@@ -106,16 +110,63 @@ public sealed class NhlBestOfSevenStrategy : IKnockoutFormatStrategy
                 ? FieldTeamIds(nodes, round.Code).ToHashSet()
                 : PicksOfRound(picksByRound, RoundDefinitions[roundIndex - 1].Code).ToHashSet();
 
-            if (picks.All(allowedTeams.Contains))
+            if (!picks.All(allowedTeams.Contains))
             {
-                continue;
+                var isLastRound = roundIndex == RoundDefinitions.Count - 1;
+                throw isLastRound
+                    ? new ArgumentException("El Campeón debe ser uno de los finalistas elegidos.")
+                    : new ArgumentException($"Los equipos de {round.Code} deben haber sido elegidos en la ronda anterior.");
             }
 
-            var isLastRound = roundIndex == RoundDefinitions.Count - 1;
-            throw isLastRound
-                ? new ArgumentException("El Campeón debe ser uno de los finalistas elegidos.")
-                : new ArgumentException($"Los equipos de {round.Code} deben haber sido elegidos en la ronda anterior.");
+            ValidateOnePickPerSeries(nodes, round, roundIndex, picks);
         }
+    }
+
+    /// <summary>
+    /// La llave es fija: la llave de un equipo en la ronda r es su posicion en R1 desplazada r bits.
+    /// Exige un ganador por llave; en CF eso equivale a un finalista del Este y uno del Oeste.
+    /// </summary>
+    private static void ValidateOnePickPerSeries(
+        IReadOnlyList<LiguillaNode> nodes,
+        KnockoutRound round,
+        int roundIndex,
+        IReadOnlyList<int> picks)
+    {
+        var firstRoundSlots = FirstRoundSlotByTeam(nodes);
+        var seriesOfPicks = picks
+            .Select(teamId => firstRoundSlots.TryGetValue(teamId, out var slot) ? slot >> roundIndex : -1)
+            .ToList();
+
+        var onePerSeries = seriesOfPicks.Distinct().Count() == round.NodeCount
+                           && seriesOfPicks.All(series => series >= 0 && series < round.NodeCount);
+        if (onePerSeries)
+        {
+            return;
+        }
+
+        if (round.Code == ConferenceFinalCode)
+        {
+            throw new ArgumentException("Los dos finalistas deben ser uno del Este y uno del Oeste.");
+        }
+
+        throw new ArgumentException($"Debes elegir un ganador por cada llave de {round.Code}.");
+    }
+
+    /// <summary>Posicion (0-7) del cruce de R1 donde juega cada equipo.</summary>
+    private static Dictionary<int, int> FirstRoundSlotByTeam(IReadOnlyList<LiguillaNode> nodes)
+    {
+        var slots = new Dictionary<int, int>();
+        var firstRound = NodesOfRound(nodes, FirstRoundCode);
+
+        for (var position = 0; position < firstRound.Count; position++)
+        {
+            foreach (var teamId in new[] { firstRound[position].TeamAId, firstRound[position].TeamBId }.OfType<int>())
+            {
+                slots[teamId] = position;
+            }
+        }
+
+        return slots;
     }
 
     /// <inheritdoc />

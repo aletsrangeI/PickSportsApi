@@ -579,7 +579,8 @@ public class LiguillaApplication : ILiguillaApplication
         WinnerTeam = node.WinnerTeam != null ? MapTeam(node.WinnerTeam, UnseededValue) : null,
         IsResolved = node.IsResolved,
         ResolvedAtUtc = node.ResolvedAtUtc,
-        KickoffUtc = node.KickoffUtc
+        KickoffUtc = node.KickoffUtc,
+        Conference = node.Conference
     };
 
     private static LiguillaBracketDetailDto MapBracketDetail(

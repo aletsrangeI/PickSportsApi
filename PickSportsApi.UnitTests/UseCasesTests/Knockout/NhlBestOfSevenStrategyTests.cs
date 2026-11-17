@@ -150,6 +150,94 @@ public class NhlBestOfSevenStrategyTests
     }
 
     [Fact]
+    public void ValidatePicks_WhenBothFinalistsAreFromTheEast_ThrowsFinalistsMessage()
+    {
+        // Arrange: CF 1 y 5 salen del cuadro Este (R1 nodos 1-4); el campeon es uno de ellos.
+        var strategy = new NhlBestOfSevenStrategy();
+        var nodes = BuildBracket(fillFirstRound: true);
+        var picks = CoherentPicks();
+        picks[ConferenceFinal] = new List<int> { 1, 5 };
+        picks[Final] = new List<int> { 1 };
+
+        // Act
+        var act = () => strategy.ValidatePicks(nodes, picks);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Los dos finalistas deben ser uno del Este y uno del Oeste.");
+    }
+
+    [Fact]
+    public void ValidatePicks_WhenTwoSecondRoundWinnersShareTheSameSeries_ThrowsPerSeriesMessage()
+    {
+        // Arrange: 1 y 3 salen de los nodos R1 1 y 2 (misma llave R2 nodo 9); falta un ganador en el nodo 10.
+        var strategy = new NhlBestOfSevenStrategy();
+        var nodes = BuildBracket(fillFirstRound: true);
+        var picks = CoherentPicks();
+        picks[SecondRound] = new List<int> { 1, 3, 9, 13 };
+
+        // Act
+        var act = () => strategy.ValidatePicks(nodes, picks);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Debes elegir un ganador por cada llave de R2.");
+    }
+
+    [Fact]
+    public void ValidatePicks_WhenTwoFirstRoundWinnersShareTheSameSeries_ThrowsPerSeriesMessage()
+    {
+        // Arrange: 1 y 2 juegan entre si en el nodo 1; el nodo 2 (3 vs 4) queda sin ganador.
+        var strategy = new NhlBestOfSevenStrategy();
+        var nodes = BuildBracket(fillFirstRound: true);
+        var picks = CoherentPicks();
+        picks[FirstRound] = new List<int> { 1, 2, 5, 7, 9, 11, 13, 15 };
+
+        // Act
+        var act = () => strategy.ValidatePicks(nodes, picks);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Debes elegir un ganador por cada llave de R1.");
+    }
+
+    [Fact]
+    public void ValidatePicks_WithOneWinnerPerSeriesAndEastVersusWestFinal_DoesNotThrow()
+    {
+        // Arrange: cuadro Este = R1 nodos 1-4 (equipos 1-8), Oeste = nodos 5-8 (equipos 9-16).
+        var strategy = new NhlBestOfSevenStrategy();
+        var nodes = BuildBracket(fillFirstRound: true);
+        var picks = new Dictionary<string, IReadOnlyList<int>>
+        {
+            [FirstRound] = new List<int> { 2, 3, 6, 7, 10, 11, 14, 15 },
+            [SecondRound] = new List<int> { 2, 7, 10, 15 },
+            [ConferenceFinal] = new List<int> { 7, 10 },
+            [Final] = new List<int> { 10 }
+        };
+
+        // Act
+        var act = () => strategy.ValidatePicks(nodes, picks);
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void EligibleTeamIds_ForSecondRound_ExcludesTeamsOutsideTheField()
+    {
+        // Arrange
+        var strategy = new NhlBestOfSevenStrategy();
+        var nodes = BuildBracket(fillFirstRound: true);
+        var previous = new Dictionary<string, IReadOnlyList<int>> { [FirstRound] = new List<int> { 1, 3, 5, 7, 9, 11, 13, 99 } };
+
+        // Act
+        var eligible = strategy.EligibleTeamIds(SecondRound, nodes, previous);
+
+        // Assert
+        eligible.Should().Equal(1, 3, 5, 7, 9, 11, 13);
+    }
+
+    [Fact]
     public void ValidatePicks_WhenSecondRoundTeamWasNotPickedInFirstRound_Throws()
     {
         // Arrange

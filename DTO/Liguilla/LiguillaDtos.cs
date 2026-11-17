@@ -22,6 +22,7 @@ public class LiguillaNodeDto
     public bool IsResolved { get; set; }
     public DateTime? ResolvedAtUtc { get; set; }
     public DateTime? KickoffUtc { get; set; }
+    public string? Conference { get; set; }
 }
 
 public class SubmitLiguillaBracketDto

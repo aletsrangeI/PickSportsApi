@@ -131,6 +131,94 @@ public class NflReseededStrategyTests
     }
 
     [Fact]
+    public void ValidatePicks_WhenBothConferenceChampionsAreFromTheAfc_ThrowsFinalistsMessage()
+    {
+        // Arrange: Super Bowl con dos equipos de la AFC (1 y 2).
+        var strategy = new NflReseededStrategy();
+        var nodes = BuildBracket();
+        var picks = CoherentPicks();
+        picks[ConferenceRound] = new List<int> { 1, 2 };
+        picks[SuperBowl] = new List<int> { 1 };
+
+        // Act
+        var act = () => strategy.ValidatePicks(nodes, picks);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Los dos finalistas deben ser uno de la AFC y uno de la NFC.");
+    }
+
+    [Fact]
+    public void ValidatePicks_WhenDivisionalHasThreeTeamsOfOneConference_ThrowsConferenceMessage()
+    {
+        // Arrange: 1, 2 y 3 son AFC; solo un NFC (11).
+        var strategy = new NflReseededStrategy();
+        var nodes = BuildBracket();
+        var picks = CoherentPicks();
+        picks[Divisional] = new List<int> { 1, 2, 3, 11 };
+
+        // Act
+        var act = () => strategy.ValidatePicks(nodes, picks);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Debes elegir 2 ganadores de la conferencia AFC en DIV.");
+    }
+
+    [Fact]
+    public void ValidatePicks_WhenWildCardHasFourTeamsOfOneConference_ThrowsConferenceMessage()
+    {
+        // Arrange: AFC 2,3,4,5 (cuatro) y NFC 12,13 (dos).
+        var strategy = new NflReseededStrategy();
+        var nodes = BuildBracket();
+        var picks = CoherentPicks();
+        picks[WildCard] = new List<int> { 2, 3, 4, 5, 12, 13 };
+
+        // Act
+        var act = () => strategy.ValidatePicks(nodes, picks);
+
+        // Assert
+        act.Should().Throw<ArgumentException>()
+            .WithMessage("Debes elegir 3 ganadores de la conferencia AFC en WC.");
+    }
+
+    [Fact]
+    public void ValidatePicks_WithValidBracketThatAdvancesByeAndUpsetTeams_DoesNotThrow()
+    {
+        // Arrange: AFC: 7, 6, 5 ganan WC y el bye (1) juega DIV; NFC: 12, 16, 17 y el bye (11).
+        var strategy = new NflReseededStrategy();
+        var nodes = BuildBracket();
+        var picks = new Dictionary<string, IReadOnlyList<int>>
+        {
+            [WildCard] = new List<int> { 7, 6, 5, 12, 16, 17 },
+            [Divisional] = new List<int> { 1, 7, 11, 16 },
+            [ConferenceRound] = new List<int> { 7, 11 },
+            [SuperBowl] = new List<int> { 11 }
+        };
+
+        // Act
+        var act = () => strategy.ValidatePicks(nodes, picks);
+
+        // Assert
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void EligibleTeamIds_ForConferenceRound_ExcludesTeamsWithoutAConference()
+    {
+        // Arrange: 99 no aparece en ningun nodo con conferencia.
+        var strategy = new NflReseededStrategy();
+        var nodes = BuildBracket();
+        var previous = new Dictionary<string, IReadOnlyList<int>> { [Divisional] = new List<int> { 1, 2, 11, 99 } };
+
+        // Act
+        var eligible = strategy.EligibleTeamIds(ConferenceRound, nodes, previous);
+
+        // Assert
+        eligible.Should().BeEquivalentTo(new[] { 1, 2, 11 });
+    }
+
+    [Fact]
     public void ValidatePicks_WhenDivisionalTeamIsNeitherWildCardPickNorBye_Throws()
     {
         // Arrange

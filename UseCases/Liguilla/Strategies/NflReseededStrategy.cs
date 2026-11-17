@@ -93,7 +93,12 @@ public sealed class NflReseededStrategy : IKnockoutFormatStrategy
             return FieldTeamIds(nodes, roundCode).ToList();
         }
 
-        var eligible = PicksOfRound(previousPicks, RoundDefinitions[roundIndex - 1].Code).Distinct().ToList();
+        // Solo equipos con conferencia conocida en la llave (un pick ajeno al cuadro no puede avanzar).
+        var conferenceByTeam = ConferenceByTeam(nodes);
+        var eligible = PicksOfRound(previousPicks, RoundDefinitions[roundIndex - 1].Code)
+            .Where(conferenceByTeam.ContainsKey)
+            .Distinct()
+            .ToList();
         if (roundCode == DivisionalCode)
         {
             eligible.AddRange(ByeTeamIds(nodes).Where(teamId => !eligible.Contains(teamId)));
@@ -131,16 +136,63 @@ public sealed class NflReseededStrategy : IKnockoutFormatStrategy
                 }
             }
 
-            if (picks.All(allowedTeams.Contains))
+            if (!picks.All(allowedTeams.Contains))
+            {
+                var isLastRound = roundIndex == RoundDefinitions.Count - 1;
+                throw isLastRound
+                    ? new ArgumentException("El Campeón debe ser uno de los finalistas elegidos.")
+                    : new ArgumentException($"Los equipos de {round.Code} deben haber sido elegidos en la ronda anterior.");
+            }
+
+            ValidatePicksPerConference(nodes, round, picks);
+        }
+    }
+
+    /// <summary>Cada conferencia aporta la misma cantidad de ganadores; la Super Bowl (un campeon) no se reparte.</summary>
+    private static void ValidatePicksPerConference(
+        IReadOnlyList<LiguillaNode> nodes,
+        KnockoutRound round,
+        IReadOnlyList<int> picks)
+    {
+        if (round.Code == SuperBowlCode)
+        {
+            return;
+        }
+
+        var conferenceByTeam = ConferenceByTeam(nodes);
+        var perConference = round.WinnersToPick / Conferences.Length;
+
+        foreach (var conference in Conferences)
+        {
+            var count = picks.Count(teamId =>
+                conferenceByTeam.TryGetValue(teamId, out var teamConference)
+                && string.Equals(teamConference, conference, StringComparison.OrdinalIgnoreCase));
+            if (count == perConference)
             {
                 continue;
             }
 
-            var isLastRound = roundIndex == RoundDefinitions.Count - 1;
-            throw isLastRound
-                ? new ArgumentException("El Campeón debe ser uno de los finalistas elegidos.")
-                : new ArgumentException($"Los equipos de {round.Code} deben haber sido elegidos en la ronda anterior.");
+            throw round.Code == ConferenceCode
+                ? new ArgumentException("Los dos finalistas deben ser uno de la AFC y uno de la NFC.")
+                : new ArgumentException(
+                    $"Debes elegir {perConference} ganadores de la conferencia {conference.ToUpperInvariant()} en {round.Code}.");
         }
+    }
+
+    /// <summary>Conferencia de cada equipo segun el nodo donde aparece (los byes salen de su nodo Divisional).</summary>
+    private static Dictionary<int, string> ConferenceByTeam(IReadOnlyList<LiguillaNode> nodes)
+    {
+        var result = new Dictionary<int, string>();
+
+        foreach (var node in nodes.Where(item => !string.IsNullOrWhiteSpace(item.Conference)))
+        {
+            foreach (var teamId in new[] { node.TeamAId, node.TeamBId }.OfType<int>())
+            {
+                result.TryAdd(teamId, node.Conference!);
+            }
+        }
+
+        return result;
     }
 
     /// <inheritdoc />

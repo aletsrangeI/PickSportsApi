@@ -14,6 +14,7 @@ public class EspnSyncService : IEspnSyncService
 {
     private const string PrimaryBase   = "https://site.web.api.espn.com/apis/site/v2/sports";
     private const string SecondaryBase = "https://sports.core.api.espn.com/v2/sports";
+    private const int EspnEventLimit   = 1000; // ESPN no pagina el scoreboard: tope duro por respuesta
 
     private readonly IHttpClientFactory   _httpClientFactory;
     private readonly IUnitOfWork          _unitOfWork;
@@ -231,7 +232,9 @@ public class EspnSyncService : IEspnSyncService
             var years = new List<int> { season.Year };
             (DateTime start, DateTime end)? window = null;
             var seasonNameForWindow = season.Name.ToLowerInvariant();
-            if (sport == "soccer" && !seasonNameForWindow.Contains("clausura") && !seasonNameForWindow.Contains("apertura"))
+            var usesWindow = (sport == "soccer" && !seasonNameForWindow.Contains("clausura") && !seasonNameForWindow.Contains("apertura"))
+                          || sport == "hockey";
+            if (usesWindow)
             {
                 window = await ResolveSeasonWindowAsync(season, sport, leagueCode, ct);
                 if (window.HasValue)
@@ -248,7 +251,29 @@ public class EspnSyncService : IEspnSyncService
                 if (json == null) continue;
 
                 await LogHealthAsync(url, httpCode, true, "Fallback L2 scoreboard date-range", latencyMs);
-                games.AddRange(_parser.ParseScoreboard(json));
+                var yearGames = _parser.ParseScoreboard(json);
+
+                // ESPN no pagina: el tope duro es EspnEventLimit eventos. Si el año llega al tope, la respuesta está
+                // truncada (y mezcla temporadas); se vuelve a pedir ese año mes por mes (dates=yyyyMM no se trunca).
+                if (CountEvents(json) >= EspnEventLimit)
+                {
+                    _logger.LogWarning("[ESPN L2] dates={0} alcanzó el tope de {1} eventos; se pide mes por mes.", year, EspnEventLimit);
+                    var monthly = new List<ParsedGame>();
+                    for (var month = 1; month <= 12; month++)
+                    {
+                        var monthUrl = $"{PrimaryBase}/{sport}/{leagueCode}/scoreboard?dates={year}{month:00}&limit=1000";
+                        var (monthJson, _, monthHttp, monthLatency) = await FetchWithFallbackAsync(monthUrl, ct);
+                        if (monthJson == null) continue;
+
+                        await LogHealthAsync(monthUrl, monthHttp, true, "Fallback L2 scoreboard por mes (año truncado)", monthLatency);
+                        monthly.AddRange(_parser.ParseScoreboard(monthJson));
+                    }
+
+                    if (monthly.Count > 0)
+                        yearGames = monthly.GroupBy(g => g.EspnGameId).Select(g => g.First()).ToList();
+                }
+
+                games.AddRange(yearGames);
             }
 
             if (window.HasValue)
@@ -260,6 +285,8 @@ public class EspnSyncService : IEspnSyncService
                     // Las eliminatorias (playoffs, octavos, final…) no son jornadas de temporada regular:
                     // se juegan con el módulo Pick'em, no con la quiniela por jornada.
                     .Where(g => !IsKnockoutPhase(g.SeasonSlug))
+                    // La pretemporada tampoco cuenta para la quiniela por jornada.
+                    .Where(g => !IsPreseason(g.SeasonSlug))
                     .ToList();
             }
 
@@ -298,6 +325,19 @@ public class EspnSyncService : IEspnSyncService
         {
             return (new List<ParsedWeek>(), ex.Message);
         }
+    }
+
+    /// <summary>True si el slug de fase de ESPN (season.slug) es de pretemporada ("preseason", "pre-season").</summary>
+    private static bool IsPreseason(string? slug) =>
+        !string.IsNullOrWhiteSpace(slug) && slug.Replace("-", "").Equals("preseason", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Cantidad de eventos del arreglo "events" de un scoreboard (0 si el JSON no lo trae).</summary>
+    private static int CountEvents(string json)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        return doc.RootElement.TryGetProperty("events", out var ev) && ev.ValueKind == System.Text.Json.JsonValueKind.Array
+            ? ev.GetArrayLength()
+            : 0;
     }
 
     /// <summary>

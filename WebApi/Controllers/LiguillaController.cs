@@ -4,7 +4,9 @@ using DTO.Liguilla;
 using Interface.Persistence;
 using Interface.UseCases;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
 
 namespace WebApi.Controllers;
 
@@ -15,11 +17,16 @@ public class LiguillaController : ControllerBase
 {
     private readonly ILiguillaApplication _liguillaApplication;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IWebHostEnvironment _environment;
 
-    public LiguillaController(ILiguillaApplication liguillaApplication, IUnitOfWork unitOfWork)
+    public LiguillaController(
+        ILiguillaApplication liguillaApplication,
+        IUnitOfWork unitOfWork,
+        IWebHostEnvironment environment)
     {
         _liguillaApplication = liguillaApplication;
         _unitOfWork = unitOfWork;
+        _environment = environment;
     }
 
     private int GetCurrentUserId()
@@ -197,11 +204,15 @@ public class LiguillaController : ControllerBase
     /// <summary>
     /// POST /api/quinielas/{quinielaId}/liguilla/admin/seed-simulation
     /// Sembrado de prueba con la tabla de posiciones de hoy, segun el formato de eliminatoria de la liga, para pruebas locales y QA.
-    /// Solo permitido para administradores.
+    /// Solo disponible en Development; no existe en produccion (responde 404 antes de cualquier otra comprobacion).
+    /// En Development, solo permitido para administradores.
     /// </summary>
     [HttpPost("admin/seed-simulation")]
     public async Task<IActionResult> SeedSimulation(int quinielaId)
     {
+        if (!_environment.IsDevelopment())
+            return NotFound();
+
         if (!await IsUserAdminAsync(quinielaId))
             return Forbid();
 
