@@ -55,13 +55,15 @@ public class EspnScoreboardParser
             return grouped;
         }
 
-        var isoGrouped = new SortedDictionary<int, List<ParsedGame>>();
+        // Clave (año ISO, semana ISO): una temporada que cruza de año (Champions 2026-27) debe ordenar
+        // septiembre 2026 antes que enero 2027, y no por número de semana a secas.
+        var isoGrouped = new SortedDictionary<(int year, int week), List<ParsedGame>>();
         foreach (var g in sorted)
         {
-            var isoWeek = GetIso8601WeekOfYear(g.DateUtc);
-            if (!isoGrouped.ContainsKey(isoWeek))
-                isoGrouped[isoWeek] = new List<ParsedGame>();
-            isoGrouped[isoWeek].Add(g);
+            var key = (System.Globalization.ISOWeek.GetYear(g.DateUtc), GetIso8601WeekOfYear(g.DateUtc));
+            if (!isoGrouped.ContainsKey(key))
+                isoGrouped[key] = new List<ParsedGame>();
+            isoGrouped[key].Add(g);
         }
 
         var weekIndex = 1;
@@ -116,6 +118,42 @@ public class EspnScoreboardParser
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// El calendario de ESPN para fútbol americano devuelve solo referencias ({ "items": [ { "$ref": ".../weeks/1" } ] })
+    /// sin fechas. Devuelve esas URLs para resolverlas una por una; vacío si los items ya traen datos.
+    /// </summary>
+    public List<string> ExtractCalendarRefs(string json)
+    {
+        var refs = new List<string>();
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+                return refs;
+
+            foreach (var item in items.EnumerateArray())
+            {
+                if (item.TryGetProperty("startDate", out _)) continue;
+                if (item.TryGetProperty("$ref", out var r) && r.GetString() is { Length: > 0 } url)
+                    refs.Add(url);
+            }
+        }
+        catch { }
+        return refs;
+    }
+
+    /// <summary>Parsea una semana individual del calendario (documento resuelto desde un $ref).</summary>
+    public ParsedWeek? ParseCalendarWeek(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var wrapped = "{\"items\":[" + doc.RootElement.GetRawText() + "]}";
+            return ParseCalendar(wrapped).FirstOrDefault();
+        }
+        catch { return null; }
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────

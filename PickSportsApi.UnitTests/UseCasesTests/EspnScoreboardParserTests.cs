@@ -209,6 +209,72 @@ public class EspnScoreboardParserTests
         Assert.Single(grouped[11]);
     }
 
+    [Fact]
+    public void ParseCalendar_NflRefOnlyItems_ReturnsNoWeeksAndExposesRefsToResolve()
+    {
+        // Arrange: forma real del endpoint core de ESPN para NFL
+        const string json = "{\"count\":2,\"items\":[" +
+            "{\"$ref\":\"http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/types/2/weeks/1?lang=en\"}," +
+            "{\"$ref\":\"http://sports.core.api.espn.com/v2/sports/football/leagues/nfl/seasons/2026/types/2/weeks/2?lang=en\"}]}";
+
+        // Act
+        var weeks = _parser.ParseCalendar(json);
+        var refs = _parser.ExtractCalendarRefs(json);
+
+        // Assert
+        Assert.Empty(weeks);
+        Assert.Equal(2, refs.Count);
+        Assert.EndsWith("weeks/1?lang=en", refs[0]);
+    }
+
+    [Fact]
+    public void ParseCalendarWeek_ResolvedNflWeek_ReadsNumberAndRealDates()
+    {
+        // Arrange
+        const string json = "{\"number\":1,\"startDate\":\"2026-09-06T07:00Z\",\"endDate\":\"2026-09-16T06:59Z\",\"text\":\"Week 1\"}";
+
+        // Act
+        var week = _parser.ParseCalendarWeek(json);
+
+        // Assert
+        Assert.NotNull(week);
+        Assert.Equal(1, week!.WeekNumber);
+        Assert.Equal(new DateTime(2026, 9, 6, 7, 0, 0, DateTimeKind.Utc), week.StartDate.ToUniversalTime());
+        Assert.Equal(2026, week.EndDate.Year);
+    }
+
+    [Fact]
+    public void ExtractCalendarRefs_ItemsWithInlineDates_ReturnsNothing()
+    {
+        // Arrange: si el calendario ya trae fechas no hay nada que resolver
+        const string json = "{\"items\":[{\"number\":1,\"startDate\":\"2026-09-06T07:00Z\",\"endDate\":\"2026-09-16T06:59Z\"}]}";
+
+        // Act + Assert
+        Assert.Empty(_parser.ExtractCalendarRefs(json));
+        Assert.Single(_parser.ParseCalendar(json));
+    }
+
+    [Fact]
+    public void GroupByWeek_SeasonCrossingNewYear_NumbersWeeksInChronologicalOrder()
+    {
+        // Arrange: Champions 2026-27, sin número de jornada ESPN (EspnWeekNumber = 0)
+        ParsedGame Game(string id, DateTime utc) => new() { EspnGameId = id, DateUtc = utc };
+        var games = new List<ParsedGame>
+        {
+            Game("jan", new DateTime(2027, 1, 20, 20, 0, 0, DateTimeKind.Utc)),
+            Game("sep", new DateTime(2026, 9, 15, 20, 0, 0, DateTimeKind.Utc)),
+            Game("dec", new DateTime(2026, 12, 9, 20, 0, 0, DateTimeKind.Utc))
+        };
+
+        // Act
+        var grouped = _parser.GroupByWeek(games);
+
+        // Assert: septiembre -> 1, diciembre -> 2, enero (ISO semana 3 de 2027) -> 3
+        Assert.Equal("sep", grouped[1].Single().EspnGameId);
+        Assert.Equal("dec", grouped[2].Single().EspnGameId);
+        Assert.Equal("jan", grouped[3].Single().EspnGameId);
+    }
+
     [Theory]
     [InlineData("401877045", 1)]  // Necaxa vs Atlante (Jornada 1)
     [InlineData("401876984", 7)]  // Toluca at Puebla (Jornada 7 reprogramado)

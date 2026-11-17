@@ -18,17 +18,20 @@ public class QuinielaApplication : IQuinielaApplication
     private readonly IAppMapper _mapper;
     private readonly CreateQuinielaDtoValidator _createValidator;
     private readonly JoinQuinielaDtoValidator _joinValidator;
+    private readonly ISeasonProvisioner? _seasonProvisioner;
 
     public QuinielaApplication(
         IUnitOfWork unitOfWork,
         IAppMapper mapper,
         CreateQuinielaDtoValidator createValidator,
-        JoinQuinielaDtoValidator joinValidator)
+        JoinQuinielaDtoValidator joinValidator,
+        ISeasonProvisioner? seasonProvisioner = null)
     {
         _unitOfWork = unitOfWork;
         _mapper = mapper;
         _createValidator = createValidator;
         _joinValidator = joinValidator;
+        _seasonProvisioner = seasonProvisioner;
     }
 
     public async Task<Response<QuinielaResponseDto>> CreateAsync(int userId, CreateQuinielaDto request)
@@ -56,6 +59,7 @@ public class QuinielaApplication : IQuinielaApplication
         string inviteCode;
         int? leagueId = null;
         int? seasonId = null;
+        string? provisionWarning = null;
 
         if (isCustomEvents)
         {
@@ -79,7 +83,17 @@ public class QuinielaApplication : IQuinielaApplication
             }
 
             leagueId = league.Id;
-            seasonId = (await _unitOfWork.Seasons.GetCurrentSeasonAsync(league.Id))?.Id;
+            if (_seasonProvisioner != null)
+            {
+                // H-011: la quiniela debe nacer lista (temporada vigente + calendario) para poder iniciar e invitar.
+                var provision = await _seasonProvisioner.EnsureReadyAsync(league);
+                seasonId = provision.Season?.Id;
+                provisionWarning = provision.Warning;
+            }
+            else
+            {
+                seasonId = (await _unitOfWork.Seasons.GetCurrentSeasonAsync(league.Id))?.Id;
+            }
             inviteCode = await GenerateUniqueInviteCodeAsync(league.Code);
         }
 
@@ -136,7 +150,9 @@ public class QuinielaApplication : IQuinielaApplication
         resultDto.MembersCount = 1;
 
         response.isSuccess = true;
-        response.Message = "Quiniela creada exitosamente.";
+        response.Message = provisionWarning == null
+            ? "Quiniela creada exitosamente."
+            : $"Quiniela creada exitosamente. {provisionWarning}";
         response.Data = resultDto;
         return response;
     }

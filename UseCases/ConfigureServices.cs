@@ -31,6 +31,7 @@ public static class ConfigureServices
 
         // Application Use Cases
         services.AddScoped<IAuthApplication, AuthApplication>();
+        services.AddScoped<ISeasonProvisioner, UseCases.Seasons.SeasonProvisioner>();
         services.AddScoped<IQuinielaApplication, QuinielaApplication>();
         services.AddScoped<IUsersApplication, UsersApplication>();
         services.AddScoped<IContenidoCatalogoApplication, ContenidoCatalogosApplication>();

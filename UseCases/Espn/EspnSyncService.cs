@@ -195,7 +195,22 @@ public class EspnSyncService : IEspnSyncService
             if (json == null) return (new List<ParsedWeek>(), $"HTTP {httpCode}");
 
             await LogHealthAsync(url, httpCode, true, null, latencyMs);
-            return (_parser.ParseCalendar(json), null);
+            var weeks = _parser.ParseCalendar(json);
+
+            if (weeks.Count == 0)
+            {
+                // ESPN devuelve solo $ref por semana: se resuelve cada una para obtener sus fechas reales.
+                foreach (var weekRef in _parser.ExtractCalendarRefs(json))
+                {
+                    var (weekJson, _, _, _) = await FetchWithFallbackAsync(weekRef.Replace("http://", "https://"), ct);
+                    var week = weekJson == null ? null : _parser.ParseCalendarWeek(weekJson);
+                    if (week == null) continue;
+                    week.Label = $"Jornada {week.WeekNumber}";
+                    weeks.Add(week);
+                }
+            }
+
+            return (weeks, null);
         }
         catch (Exception ex)
         {
@@ -209,16 +224,47 @@ public class EspnSyncService : IEspnSyncService
         try
         {
             var (sport, leagueCode) = ResolveEspnPath(league);
-            // dates={year} trae todos los partidos del año (e.g. Clausura + Apertura)
-            var url = $"{PrimaryBase}/{sport}/{leagueCode}/scoreboard?dates={season.Year}&limit=500";
+            // dates={year} trae todos los partidos del año (e.g. Clausura + Apertura de Liga MX).
+            // Para el resto de ligas de fútbol se acota a la ventana real de la temporada que publica ESPN
+            // (p. ej. Champions 2026-07 → 2027-07); con dates={year} se mezclaban dos temporadas.
+            // (ESPN responde 400 a rangos "yyyyMMdd-yyyyMMdd", por eso se piden los años y se filtra en memoria.)
+            var years = new List<int> { season.Year };
+            (DateTime start, DateTime end)? window = null;
+            var seasonNameForWindow = season.Name.ToLowerInvariant();
+            if (sport == "soccer" && !seasonNameForWindow.Contains("clausura") && !seasonNameForWindow.Contains("apertura"))
+            {
+                window = await ResolveSeasonWindowAsync(season, sport, leagueCode, ct);
+                if (window.HasValue)
+                    years = new[] { window.Value.start.Year, window.Value.end.Year }.Distinct().ToList();
+            }
 
-            var (json, _, httpCode, latencyMs) = await FetchWithFallbackAsync(url, ct);
-            if (json == null) return (new List<ParsedWeek>(), $"HTTP {httpCode}");
+            var games = new List<ParsedGame>();
+            var lastHttp = 0;
+            foreach (var year in years)
+            {
+                var url = $"{PrimaryBase}/{sport}/{leagueCode}/scoreboard?dates={year}&limit=1000";
+                var (json, _, httpCode, latencyMs) = await FetchWithFallbackAsync(url, ct);
+                lastHttp = httpCode;
+                if (json == null) continue;
 
-            await LogHealthAsync(url, httpCode, true, "Fallback L2 scoreboard date-range", latencyMs);
+                await LogHealthAsync(url, httpCode, true, "Fallback L2 scoreboard date-range", latencyMs);
+                games.AddRange(_parser.ParseScoreboard(json));
+            }
 
-            var games = _parser.ParseScoreboard(json);
-            if (games.Count == 0) return (new List<ParsedWeek>(), "Scoreboard vacío para el rango de fechas");
+            if (window.HasValue)
+            {
+                var (ws, we) = window.Value;
+                games = games
+                    .Where(g => g.DateUtc >= ws && g.DateUtc < we.AddDays(1))
+                    .GroupBy(g => g.EspnGameId).Select(g => g.First())
+                    // Las eliminatorias (playoffs, octavos, final…) no son jornadas de temporada regular:
+                    // se juegan con el módulo Pick'em, no con la quiniela por jornada.
+                    .Where(g => !IsKnockoutPhase(g.SeasonSlug))
+                    .ToList();
+            }
+
+            if (games.Count == 0)
+                return (new List<ParsedWeek>(), lastHttp >= 400 || lastHttp == 0 ? $"HTTP {lastHttp}" : "Scoreboard vacío para el rango de fechas");
 
             // Filtrar por torneo si el nombre de la temporada lo indica (e.g. "Clausura" o "Apertura")
             var seasonNameLower = season.Name.ToLowerInvariant();
@@ -251,6 +297,67 @@ public class EspnSyncService : IEspnSyncService
         catch (Exception ex)
         {
             return (new List<ParsedWeek>(), ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// True si el slug de fase de ESPN (season.slug) corresponde a una fase eliminatoria o previa
+    /// (p. ej. "knockout-round-playoffs", "round-of-16", "quarterfinals", "final"). "league-phase" y
+    /// "regular-season" no lo son.
+    /// </summary>
+    public static bool IsKnockoutPhase(string? slug)
+    {
+        if (string.IsNullOrWhiteSpace(slug)) return false;
+        var s = slug.ToLowerInvariant();
+        return s.Contains("knockout") || s.Contains("playoff") || s.Contains("play-off")
+            || s.Contains("post-season") || s.Contains("postseason")
+            || s.Contains("round-of") || s.Contains("quarter") || s.Contains("semi")
+            || s.Contains("final") || s.Contains("preliminary") || s.Contains("qualif");
+    }
+
+    /// <summary>
+    /// Ventana (inicio, fin) de la temporada vigente según ESPN (leagues[0].season del scoreboard sin fechas).
+    /// Si la temporada aún no la tiene, la guarda en BD y la renombra cuando el nombre es el automático.
+    /// Devuelve null si no se puede determinar (se usa entonces el año calendario).
+    /// </summary>
+    private async Task<(DateTime start, DateTime end)?> ResolveSeasonWindowAsync(
+        Season season, string sport, string leagueCode, CancellationToken ct)
+    {
+        if (season.StartDate.HasValue && season.EndDate.HasValue)
+            return (season.StartDate.Value.Date, season.EndDate.Value.Date);
+
+        // Solo la temporada vigente puede tomar la ventana "actual" de ESPN.
+        if (!season.IsCurrent) return null;
+
+        try
+        {
+            var (json, _, _, _) = await FetchWithFallbackAsync($"{PrimaryBase}/{sport}/{leagueCode}/scoreboard", ct);
+            if (json == null) return null;
+
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("leagues", out var leagues) || leagues.GetArrayLength() == 0) return null;
+            if (!leagues[0].TryGetProperty("season", out var s)) return null;
+            if (!s.TryGetProperty("startDate", out var sd) || !s.TryGetProperty("endDate", out var ed)) return null;
+
+            var start = DateTime.Parse(sd.GetString()!, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+            var end = DateTime.Parse(ed.GetString()!, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+            if (end <= start) return null;
+
+            var autoName = $"Temporada {season.Year}";
+            season.StartDate = start;
+            season.EndDate = end;
+            if (season.Name == autoName && start.Year != end.Year)
+                season.Name = $"Temporada {start.Year}-{end.Year % 100:00}";
+            await _unitOfWork.Seasons.UpdateAsync(season);
+
+            return (start.Date, end.Date);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("[ESPN L2] No se pudo leer la ventana de temporada: {0}", ex.Message);
+            return null;
         }
     }
 
