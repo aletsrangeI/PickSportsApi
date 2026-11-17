@@ -17,6 +17,9 @@ public class League : BaseAuditableEntity
     /// <summary>Clave del deporte para construir URLs ESPN: "soccer" | "football".</summary>
     public string SportKey { get; set; } = "soccer";
 
+    /// <summary>Formato de eliminatoria del Pick'em (SPEC-027): "FMF_LIGUILLA", "NHL_BEST_OF_7", "NFL_RESEEDED_SINGLE_GAME", "UEFA_TWO_LEG". Null = la liga no tiene Pick'em.</summary>
+    public string? KnockoutFormatCode { get; set; }
+
     /// <summary>
     /// Indica si la jornada pertenece a la fase final (Liguilla/Playoffs): su número supera las jornadas regulares.
     /// Las quinielas de temporada regular no publican, autollenan ni califican estas jornadas (SPEC-020).

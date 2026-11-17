@@ -13,6 +13,11 @@ public class LiguillaNode : BaseAuditableEntity
     public Team? TeamA { get; set; }
     public Team? TeamB { get; set; }
 
+    /// <summary>Id del cruce en ESPN (SPEC-027); permite resolver el nodo sin intervencion del admin.</summary>
+    public string? EspnEventGroupKey { get; set; }
+    /// <summary>"east"/"west" (NHL) o "afc"/"nfc" (NFL); null si la liga no divide por conferencia.</summary>
+    public string? Conference { get; set; }
+
     public int? SeedA { get; set; }
     public int? SeedB { get; set; }
 

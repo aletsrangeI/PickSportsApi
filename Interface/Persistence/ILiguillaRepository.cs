@@ -12,4 +12,8 @@ public interface ILiguillaRepository
     Task UpdateBracketAsync(LiguillaBracket bracket, CancellationToken ct = default);
     Task AddNodeAsync(LiguillaNode node, CancellationToken ct = default);
     Task UpdateNodeAsync(LiguillaNode node, CancellationToken ct = default);
+
+    // SPEC-027: picks genericos por ronda
+    Task<List<LiguillaBracketPick>> GetPicksByBracketAsync(int bracketId, CancellationToken ct = default);
+    Task ReplacePicksAsync(int bracketId, IReadOnlyList<LiguillaBracketPick> picks, CancellationToken ct = default);
 }
