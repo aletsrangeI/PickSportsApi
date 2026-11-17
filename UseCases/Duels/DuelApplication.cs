@@ -588,6 +588,7 @@ public class DuelApplication : IDuelApplication
         var champion = info.ChampionMember!;
         var participantIds = new[] { champion.Id };
         var row = BuildTable(fixtures, participantIds, new Dictionary<int, QuinielaMember> { [champion.Id] = champion })[0];
+        var stats = CalculateChampionStats(fixtures, champion.Id);
 
         return new HallOfFameEntryDto
         {
@@ -598,11 +599,57 @@ public class DuelApplication : IDuelApplication
             Champion = ToParticipant(champion),
             Record = $"{row.Won}-{row.Drawn}-{row.Lost}",
             Points = row.Points,
+            TotalHits = champion.TotalHits,
+            TotalUpsets = champion.TotalUpsets,
+            AdvantageWins = stats.AdvantageWins,
+            BestWinStreak = stats.BestWinStreak,
+            BestDuelHits = stats.BestDuelHits,
+            BestDuelWeekNumber = stats.BestDuelWeekNumber,
             CupName = info.CupName,
             PunishmentText = info.PunishmentText,
             Title = HallOfFameTitle,
             CanEditCup = champion.UserId == userId,
         };
+    }
+
+    /// <summary>Datos extra de la carta del campeon, calculados solo con sus duelos resueltos (sin Bye).</summary>
+    public static (int AdvantageWins, int BestWinStreak, int BestDuelHits, int? BestDuelWeekNumber)
+        CalculateChampionStats(IEnumerable<DuelFixture> fixtures, int championMemberId)
+    {
+        var played = fixtures
+            .Where(f => f.AwayMemberId != null && f.Result != null && f.Result != "BYE"
+                        && (f.HomeMemberId == championMemberId || f.AwayMemberId == championMemberId))
+            .OrderBy(f => f.WeekNumber)
+            .ToList();
+
+        int advantageWins = 0, streak = 0, bestStreak = 0, bestHits = 0;
+        int? bestWeek = null;
+
+        foreach (var f in played)
+        {
+            var isHome = f.HomeMemberId == championMemberId;
+            var won = (isHome && f.Result == "HOME") || (!isHome && f.Result == "AWAY");
+
+            if (won)
+            {
+                streak++;
+                bestStreak = Math.Max(bestStreak, streak);
+                if (f.WonByAdvantage) advantageWins++;
+            }
+            else
+            {
+                streak = 0;
+            }
+
+            var hits = isHome ? f.HomeHits : f.AwayHits;
+            if (hits > bestHits)
+            {
+                bestHits = hits;
+                bestWeek = f.WeekNumber;
+            }
+        }
+
+        return (advantageWins, bestStreak, bestHits, bestWeek);
     }
 
     // ---------------------------------------------------------------- Auxiliares

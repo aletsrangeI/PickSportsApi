@@ -101,6 +101,39 @@ public class DuelApplicationTests
         User = new User { Id = OwnerUserId + id, DisplayName = $"User {id}", EquippedTitleCode = titleCode },
     };
 
+    [Fact]
+    public void CalculateChampionStats_ComputesStreakAdvantageAndBestWeek()
+    {
+        // Arrange: campeon = miembro 1. G (local), G (visita, por ventaja), E, G, BYE ignorado.
+        var adv = Fx(2, 3, 5, 1, "AWAY", hh: 4, ah: 4);
+        adv.WonByAdvantage = true;
+        var fixtures = new List<DuelFixture>
+        {
+            Fx(1, 1, 1, 2, "HOME", hh: 6, ah: 2),
+            adv,
+            Fx(3, 5, 1, 3, "DRAW", hh: 5, ah: 5),
+            Fx(4, 7, 4, 1, "AWAY", hh: 1, ah: 3),
+            Fx(5, 9, 1, null, "BYE"),
+        };
+
+        // Act
+        var stats = DuelApplication.CalculateChampionStats(fixtures, 1);
+
+        // Assert
+        stats.AdvantageWins.Should().Be(1);
+        stats.BestWinStreak.Should().Be(2);
+        stats.BestDuelHits.Should().Be(6);
+        stats.BestDuelWeekNumber.Should().Be(1);
+    }
+
+    [Fact]
+    public void CalculateChampionStats_WithoutPlayedDuels_ReturnsZeros()
+    {
+        var stats = DuelApplication.CalculateChampionStats(new List<DuelFixture> { Fx(1, 1, 1, null, "BYE") }, 1);
+
+        stats.Should().Be((0, 0, 0, (int?)null));
+    }
+
     private static DuelFixture Fx(int id, int week, int home, int? away, string? result = null, int hh = 0, int ah = 0) => new()
     {
         Id = id,

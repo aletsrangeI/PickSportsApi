@@ -91,6 +91,18 @@ public class HallOfFameEntryDto
     /// <summary>Record G-E-P, p. ej. "12-3-2".</summary>
     public string Record { get; set; } = string.Empty;
     public int Points { get; set; }
+    /// <summary>Aciertos totales del campeon en la temporada (tabla general).</summary>
+    public int TotalHits { get; set; }
+    /// <summary>Aciertos en partidos sorpresa en la temporada.</summary>
+    public int TotalUpsets { get; set; }
+    /// <summary>Duelos que gano por Ventaja del Retador.</summary>
+    public int AdvantageWins { get; set; }
+    /// <summary>Racha mas larga de duelos ganados consecutivos.</summary>
+    public int BestWinStreak { get; set; }
+    /// <summary>Mayor numero de aciertos que logro en una fecha de duelo (0 si no hubo).</summary>
+    public int BestDuelHits { get; set; }
+    /// <summary>Fecha (jornada) de <see cref="BestDuelHits"/>; null si no hubo.</summary>
+    public int? BestDuelWeekNumber { get; set; }
     public string? CupName { get; set; }
     public string? PunishmentText { get; set; }
     public string Title { get; set; } = "Gladiador Legendario";
