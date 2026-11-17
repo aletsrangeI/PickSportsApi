@@ -43,11 +43,18 @@ public class EspnKnockoutSyncPersistenceTests : IDisposable
             NewTeam(2, "16", "Sabres")
         };
 
+        // Los equipos EXISTEN en la base y el repositorio real los devuelve desconectados (AsNoTracking): asignarlos como navegacion de un nodo
+        // hace que EF los inserte de nuevo (PK_Teams duplicada). Con objetos sueltos que no existen en la base ese defecto no se ve.
+        _context.Teams.AddRange(teams);
+        _context.SaveChanges();
+        _context.ChangeTracker.Clear();
+
         var uow = new Mock<IUnitOfWork>();
         uow.Setup(u => u.Leagues.GetAsync(LeagueId)).ReturnsAsync(league);
         uow.Setup(u => u.Seasons.GetCurrentSeasonAsync(LeagueId))
             .ReturnsAsync(new Season { Id = SeasonId, LeagueId = LeagueId, Year = 2026, IsCurrent = true });
-        uow.Setup(u => u.Teams.GetByLeagueIdAsync(LeagueId)).ReturnsAsync(teams);
+        uow.Setup(u => u.Teams.GetByLeagueIdAsync(LeagueId))
+            .ReturnsAsync(() => _context.Teams.AsNoTracking().Where(t => t.LeagueId == LeagueId).ToList());
         uow.Setup(u => u.Liguilla).Returns(_repository);
         uow.Setup(u => u.Save(It.IsAny<CancellationToken>()))
             .Returns((CancellationToken ct) => _context.SaveChangesAsync(ct));

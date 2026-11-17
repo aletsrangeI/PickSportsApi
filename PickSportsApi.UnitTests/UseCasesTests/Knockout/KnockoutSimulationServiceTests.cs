@@ -48,7 +48,9 @@ public class KnockoutSimulationServiceTests : IDisposable
 
         _uow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(_quiniela);
         _uow.Setup(u => u.Leagues.GetAsync(LeagueId)).ReturnsAsync(_league);
-        _uow.Setup(u => u.Teams.GetByLeagueIdAsync(LeagueId)).ReturnsAsync(() => _teams);
+        // El repositorio real devuelve equipos desconectados (AsNoTracking): asignarlos como navegacion de un nodo hace que EF los INSERTE de nuevo.
+        _uow.Setup(u => u.Teams.GetByLeagueIdAsync(LeagueId))
+            .ReturnsAsync(() => _context.Teams.AsNoTracking().Where(t => t.LeagueId == LeagueId).ToList());
         _uow.Setup(u => u.Liguilla).Returns(_repository);
         _uow.Setup(u => u.Save(It.IsAny<CancellationToken>()))
             .Returns((CancellationToken ct) => _context.SaveChangesAsync(ct));

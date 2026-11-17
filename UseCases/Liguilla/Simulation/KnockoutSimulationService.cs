@@ -137,13 +137,12 @@ public class KnockoutSimulationService : IKnockoutSimulationService
             return;
         }
 
+        // Solo las llaves foraneas: los equipos vienen desconectados (AsNoTracking) y asignarlos como navegacion haria que EF los inserte de nuevo.
         node.TeamAId = teamA.Id;
-        node.TeamA = teamA;
         node.SeedA = tie.SeedA;
         if (teamB == null) return;
 
         node.TeamBId = teamB.Id;
-        node.TeamB = teamB;
         node.SeedB = tie.SeedB;
     }
 
