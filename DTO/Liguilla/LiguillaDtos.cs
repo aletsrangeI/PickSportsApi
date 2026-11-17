@@ -104,6 +104,7 @@ public class LiguillaStandingItemDto
     public int BonusPoints { get; set; }
     public bool ChampionPickedCorrectly { get; set; }
     public DateTime? SubmittedAtUtc { get; set; }
+    public Dictionary<string, int> PointsByRound { get; set; } = new();
 }
 
 public class LiguillaStandingsDto

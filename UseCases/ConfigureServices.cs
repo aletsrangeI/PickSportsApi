@@ -62,6 +62,10 @@ public static class ConfigureServices
         services.AddScoped<IKnockoutStrategyResolver, UseCases.Liguilla.KnockoutStrategyResolver>();
         services.AddScoped<IEspnKnockoutParser, UseCases.Liguilla.Espn.EspnKnockoutParser>();
         services.AddScoped<IEspnKnockoutSyncService, UseCases.Liguilla.Espn.EspnKnockoutSyncService>();
+        services.AddScoped<IKnockoutSimulationBuilder, UseCases.Liguilla.Simulation.NhlSimulationBuilder>();
+        services.AddScoped<IKnockoutSimulationBuilder, UseCases.Liguilla.Simulation.NflSimulationBuilder>();
+        services.AddScoped<IKnockoutSimulationBuilder, UseCases.Liguilla.Simulation.UefaSimulationBuilder>();
+        services.AddScoped<IKnockoutSimulationService, UseCases.Liguilla.Simulation.KnockoutSimulationService>();
         services.AddScoped<ILiguillaApplication, UseCases.Liguilla.LiguillaApplication>();
         services.AddSingleton<UseCases.Challenges.ChallengeScoringEngine>();
         services.AddScoped<IChallengeApplication, UseCases.Challenges.ChallengeApplication>();

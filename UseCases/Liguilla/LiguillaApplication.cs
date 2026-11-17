@@ -17,11 +17,16 @@ public class LiguillaApplication : ILiguillaApplication
 
     private readonly IUnitOfWork _unitOfWork;
     private readonly IKnockoutStrategyResolver _strategyResolver;
+    private readonly IKnockoutSimulationService _simulationService;
 
-    public LiguillaApplication(IUnitOfWork unitOfWork, IKnockoutStrategyResolver strategyResolver)
+    public LiguillaApplication(
+        IUnitOfWork unitOfWork,
+        IKnockoutStrategyResolver strategyResolver,
+        IKnockoutSimulationService simulationService)
     {
         _unitOfWork = unitOfWork;
         _strategyResolver = strategyResolver;
+        _simulationService = simulationService;
     }
 
     public async Task<LiguillaOverviewDto> GetOverviewAsync(int quinielaId, int userId, bool isAdmin, CancellationToken ct = default)
@@ -328,7 +333,8 @@ public class LiguillaApplication : ILiguillaApplication
                 ChampionPoints = lastPts,
                 BonusPoints = score.BonusPoints,
                 ChampionPickedCorrectly = champPickedCorrectly,
-                SubmittedAtUtc = bracket.SubmittedAtUtc
+                SubmittedAtUtc = bracket.SubmittedAtUtc,
+                PointsByRound = score.PointsByRound.ToDictionary(kv => kv.Key, kv => kv.Value)
             };
             evaluatedItems.Add(item);
             scoresByItem[item] = score;
@@ -632,8 +638,15 @@ public class LiguillaApplication : ILiguillaApplication
             throw new InvalidOperationException("La quiniela no tiene una liga asignada.");
 
         var (_, strategy) = await ResolveStrategyAsync(quiniela);
-        if (strategy == null || strategy.FormatCode != FmfLiguillaStrategy.Code)
-            throw new InvalidOperationException("La simulación de siembra solo está disponible para el formato FMF_LIGUILLA.");
+        if (strategy == null)
+            throw new InvalidOperationException(NoStrategyMessage);
+
+        // Los demás formatos (NHL, NFL, Champions) siembran con la tabla de ESPN de hoy.
+        if (strategy.FormatCode != FmfLiguillaStrategy.Code)
+        {
+            await _simulationService.SeedAsync(quinielaId, ct);
+            return true;
+        }
 
         var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
         if (seasonId == null)

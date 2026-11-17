@@ -19,11 +19,15 @@ public class LiguillaApplicationTests
     private const int UserId = 50;
 
     private readonly Mock<IUnitOfWork> _mockUow = new();
+    private readonly Mock<IKnockoutSimulationService> _mockSimulation = new();
     private readonly LiguillaApplication _sut;
 
     public LiguillaApplicationTests()
     {
-        _sut = new LiguillaApplication(_mockUow.Object, new KnockoutStrategyResolver(new IKnockoutFormatStrategy[] { new FmfLiguillaStrategy() }));
+        _sut = new LiguillaApplication(
+            _mockUow.Object,
+            new KnockoutStrategyResolver(new IKnockoutFormatStrategy[] { new FmfLiguillaStrategy() }),
+            _mockSimulation.Object);
 
         // Por defecto el usuario es miembro activo de la quiniela; las pruebas de rechazo lo sobrescriben con null.
         _mockUow.Setup(u => u.QuinielaMembers.GetMembershipAsync(QuinielaId, UserId))
@@ -315,7 +319,7 @@ public class LiguillaApplicationTests
     }
 
     private LiguillaApplication CreateNhlSut() =>
-        new(_mockUow.Object, new KnockoutStrategyResolver(new IKnockoutFormatStrategy[] { new NhlBestOfSevenStrategy() }));
+        new(_mockUow.Object, new KnockoutStrategyResolver(new IKnockoutFormatStrategy[] { new NhlBestOfSevenStrategy() }), _mockSimulation.Object);
 
     private static League NhlLeague() =>
         new() { Id = LeagueId, KnockoutFormatCode = KnockoutFormatCodes.NhlBestOf7, WeeksCount = 1 };
@@ -392,6 +396,89 @@ public class LiguillaApplicationTests
         // Assert
         result.Standings.Select(s => s.TotalPoints).Should().Equal(80, 80);
         result.Standings.Select(s => s.Alias).Should().Equal("A", "B");
+    }
+
+    [Fact]
+    public async Task GetStandings_Nhl_ExposesPointsByRoundOfEachParticipant()
+    {
+        // Arrange: 2 aciertos de R2 (20 c/u) y ninguno de CF
+        var quiniela = new Quiniela { Id = QuinielaId, League = NhlLeague(), LeagueId = LeagueId, SeasonId = SeasonId };
+        var nodes = new List<LiguillaNode>
+        {
+            ResolvedNode(9, "R2", 1), ResolvedNode(10, "R2", 2), ResolvedNode(11, "R2", 3), ResolvedNode(12, "R2", 4)
+        };
+        var bracket = new LiguillaBracket { Id = 101, QuinielaId = QuinielaId, UserId = UserId, SubmittedAtUtc = DateTime.UtcNow };
+
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Seasons.GetAsync(SeasonId)).ReturnsAsync(new Season { Id = SeasonId, Name = "NHL 2026" });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>())).ReturnsAsync(nodes);
+        _mockUow.Setup(u => u.Liguilla.GetAllBracketsForQuinielaAsync(QuinielaId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaBracket> { bracket });
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembersAsync(QuinielaId)).ReturnsAsync(new List<QuinielaMember>
+        {
+            new() { QuinielaId = QuinielaId, UserId = UserId, Alias = "A" }
+        });
+        _mockUow.Setup(u => u.Liguilla.GetPicksByBracketAsync(bracket.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PicksOf(bracket.Id, ("R2", new[] { 1, 2, 90, 91 })));
+
+        // Act
+        var result = await CreateNhlSut().GetStandingsAsync(QuinielaId);
+
+        // Assert
+        var item = result.Standings.Should().ContainSingle().Subject;
+        item.PointsByRound.Should().ContainKey("R2").WhoseValue.Should().Be(40);
+        item.PointsByRound.Values.Sum().Should().Be(item.TotalPoints - item.BonusPoints);
+    }
+
+    [Fact]
+    public async Task SeedSimulationNodes_NonFmfFormat_DelegatesToSimulationService()
+    {
+        // Arrange
+        var quiniela = new Quiniela { Id = QuinielaId, League = NhlLeague(), LeagueId = LeagueId };
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockSimulation.Setup(s => s.SeedAsync(QuinielaId, It.IsAny<CancellationToken>())).ReturnsAsync(15);
+
+        // Act
+        var seeded = await CreateNhlSut().SeedSimulationNodesAsync(QuinielaId);
+
+        // Assert
+        seeded.Should().BeTrue();
+        _mockSimulation.Verify(s => s.SeedAsync(QuinielaId, It.IsAny<CancellationToken>()), Times.Once);
+        _mockUow.Verify(u => u.Liguilla.AddNodeAsync(It.IsAny<LiguillaNode>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetOverview_AdminWithSimulatedNhlFieldBeforeSeasonEnds_IsOpenForPicks()
+    {
+        // Arrange: la fase regular no termino (jornada sin puntuar) pero el admin sembro el campo
+        var quiniela = new Quiniela { Id = QuinielaId, League = NhlLeague(), LeagueId = LeagueId };
+        var nodes = Enumerable.Range(1, 8).Select(number => new LiguillaNode
+        {
+            SeasonId = SeasonId,
+            Round = "R1",
+            NodeNumber = number,
+            TeamAId = number * 2 - 1,
+            TeamA = new Team { Id = number * 2 - 1, Name = $"Equipo {number * 2 - 1:00}" },
+            TeamBId = number * 2,
+            TeamB = new Team { Id = number * 2, Name = $"Equipo {number * 2:00}" },
+            KickoffUtc = DateTime.UtcNow.AddDays(7)
+        }).ToList();
+
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Seasons.GetCurrentSeasonAsync(LeagueId))
+            .ReturnsAsync(new Season { Id = SeasonId, LeagueId = LeagueId, IsCurrent = true });
+        _mockUow.Setup(u => u.Weeks.GetBySeasonIdAsync(SeasonId))
+            .ReturnsAsync(new List<Week> { new() { SeasonId = SeasonId, WeekNumber = 1, Status = "OPEN" } });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>())).ReturnsAsync(nodes);
+        _mockUow.Setup(u => u.Liguilla.GetBracketAsync(QuinielaId, UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LiguillaBracket?)null);
+
+        // Act
+        var result = await CreateNhlSut().GetOverviewAsync(QuinielaId, UserId, isAdmin: true);
+
+        // Assert
+        result.Status.Should().Be("OPEN_FOR_PICKS");
+        result.FormatCode.Should().Be(KnockoutFormatCodes.NhlBestOf7);
     }
 
     private void ArrangeNhlSeason(List<LiguillaNode> nodes)
