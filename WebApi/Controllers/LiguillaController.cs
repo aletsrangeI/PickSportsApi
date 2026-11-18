@@ -61,13 +61,24 @@ public class LiguillaController : ControllerBase
         var userId = GetCurrentUserId();
         var isAdmin = await IsUserAdminAsync(quinielaId);
 
-        var overview = await _liguillaApplication.GetOverviewAsync(quinielaId, userId, isAdmin);
-        return Ok(new Response<LiguillaOverviewDto>
+        try
         {
-            Data = overview,
-            isSuccess = true,
-            Message = "Overview de Liguilla obtenido exitosamente."
-        });
+            var overview = await _liguillaApplication.GetOverviewAsync(quinielaId, userId, isAdmin);
+            return Ok(new Response<LiguillaOverviewDto>
+            {
+                Data = overview,
+                isSuccess = true,
+                Message = "Overview de Liguilla obtenido exitosamente."
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new Response<LiguillaOverviewDto>
+            {
+                isSuccess = false,
+                Message = ex.Message
+            });
+        }
     }
 
     /// <summary>
@@ -161,13 +172,27 @@ public class LiguillaController : ControllerBase
     [HttpGet("standings")]
     public async Task<IActionResult> GetStandings(int quinielaId)
     {
-        var standings = await _liguillaApplication.GetStandingsAsync(quinielaId);
-        return Ok(new Response<LiguillaStandingsDto>
+        var userId = GetCurrentUserId();
+        var isAdmin = await IsUserAdminAsync(quinielaId);
+
+        try
         {
-            Data = standings,
-            isSuccess = true,
-            Message = "Posiciones de Pick'em Liguilla obtenidas exitosamente."
-        });
+            var standings = await _liguillaApplication.GetStandingsAsync(quinielaId, userId, isAdmin);
+            return Ok(new Response<LiguillaStandingsDto>
+            {
+                Data = standings,
+                isSuccess = true,
+                Message = "Posiciones de Pick'em Liguilla obtenidas exitosamente."
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new Response<LiguillaStandingsDto>
+            {
+                isSuccess = false,
+                Message = ex.Message
+            });
+        }
     }
 
     /// <summary>

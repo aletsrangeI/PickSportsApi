@@ -354,11 +354,115 @@ public class LiguillaApplicationTests
         _mockUow.Setup(u => u.QuinielaMembers.GetMembersAsync(QuinielaId)).ReturnsAsync(new List<QuinielaMember>());
 
         // Act
-        var result = await _sut.GetStandingsAsync(QuinielaId);
+        var result = await _sut.GetStandingsAsync(QuinielaId, UserId, isAdmin: false);
 
         // Assert
         result.SeasonName.Should().Be("Clausura 2026");
         _mockUow.Verify(u => u.Seasons.GetCurrentSeasonAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetOverview_WhenUserIsNotMember_ThrowsNotMemberAndReadsNothing()
+    {
+        // Arrange (SPEC-031 R1/R5): autenticado ajeno a la quiniela; Quinielas queda sin mockear a proposito
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembershipAsync(QuinielaId, UserId))
+            .ReturnsAsync((QuinielaMember?)null);
+
+        // Act
+        var act = () => _sut.GetOverviewAsync(QuinielaId, UserId, isAdmin: false);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("No perteneces a esta quiniela.");
+        _mockUow.Verify(u => u.Quinielas.GetAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetStandings_WhenUserIsNotMember_ThrowsNotMemberAndReadsNothing()
+    {
+        // Arrange (SPEC-031 R1/R5): autenticado ajeno a la quiniela; Quinielas queda sin mockear a proposito
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembershipAsync(QuinielaId, UserId))
+            .ReturnsAsync((QuinielaMember?)null);
+
+        // Act
+        var act = () => _sut.GetStandingsAsync(QuinielaId, UserId, isAdmin: false);
+
+        // Assert
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("No perteneces a esta quiniela.");
+        _mockUow.Verify(u => u.Quinielas.GetAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetStandings_WhenAdminIsNotMember_ReturnsTableWithoutConsultingMembership()
+    {
+        // Arrange (SPEC-031 R2): admin ajeno; su membresia NO se configura: si el flujo la consultara,
+        // Moq devolveria null y el caso fallaria con InvalidOperationException en lugar de devolver la tabla.
+        const int adminUserId = 77;
+        var quiniela = new Quiniela { Id = QuinielaId, League = FmfLeague(), LeagueId = LeagueId, SeasonId = SeasonId };
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Seasons.GetAsync(SeasonId)).ReturnsAsync(new Season { Id = SeasonId, Name = "Apertura 2026" });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaNode>());
+        _mockUow.Setup(u => u.Liguilla.GetAllBracketsForQuinielaAsync(QuinielaId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaBracket>());
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembersAsync(QuinielaId)).ReturnsAsync(new List<QuinielaMember>());
+
+        // Act
+        var result = await _sut.GetStandingsAsync(QuinielaId, adminUserId, isAdmin: true);
+
+        // Assert
+        result.QuinielaId.Should().Be(QuinielaId);
+        result.SeasonName.Should().Be("Apertura 2026");
+        result.Standings.Should().BeEmpty();
+        _mockUow.Verify(u => u.QuinielaMembers.GetMembershipAsync(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetStandings_WhenUserIsActiveMember_ReturnsCurrentTable()
+    {
+        // Arrange (SPEC-031 R3): miembro activo; la tabla se comporta igual que antes de la validacion
+        const int bracketId = 101;
+        var quiniela = new Quiniela { Id = QuinielaId, League = FmfLeague(), LeagueId = LeagueId, SeasonId = SeasonId };
+        var bracket = new LiguillaBracket { Id = bracketId, QuinielaId = QuinielaId, UserId = UserId, SubmittedAtUtc = DateTime.UtcNow };
+
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembershipAsync(QuinielaId, UserId))
+            .ReturnsAsync(new QuinielaMember { QuinielaId = QuinielaId, UserId = UserId, Alias = "Alex", Active = true });
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Seasons.GetAsync(SeasonId)).ReturnsAsync(new Season { Id = SeasonId, Name = "Apertura 2026" });
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaNode>());
+        _mockUow.Setup(u => u.Liguilla.GetAllBracketsForQuinielaAsync(QuinielaId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaBracket> { bracket });
+        _mockUow.Setup(u => u.QuinielaMembers.GetMembersAsync(QuinielaId)).ReturnsAsync(new List<QuinielaMember>
+        {
+            new() { QuinielaId = QuinielaId, UserId = UserId, Alias = "Alex" }
+        });
+        _mockUow.Setup(u => u.Liguilla.GetPicksByBracketAsync(bracketId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaBracketPick>());
+
+        // Act
+        var result = await _sut.GetStandingsAsync(QuinielaId, UserId, isAdmin: false);
+
+        // Assert
+        result.QuinielaId.Should().Be(QuinielaId);
+        result.SeasonName.Should().Be("Apertura 2026");
+        var item = result.Standings.Should().ContainSingle().Subject;
+        item.UserId.Should().Be(UserId);
+        item.Alias.Should().Be("Alex");
+        item.Rank.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetStandings_WhenAdminAndQuinielaDoesNotExist_ThrowsKeyNotFoundException()
+    {
+        // Arrange (SPEC-031 R6): el admin salta la membresia, pero la quiniela debe existir
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync((Quiniela?)null);
+
+        // Act
+        var act = () => _sut.GetStandingsAsync(QuinielaId, UserId, isAdmin: true);
+
+        // Assert
+        await act.Should().ThrowAsync<KeyNotFoundException>().WithMessage("*No se encontró la quiniela*");
+        _mockUow.Verify(u => u.QuinielaMembers.GetMembershipAsync(It.IsAny<int>(), It.IsAny<int>()), Times.Never);
     }
 
     private LiguillaApplication CreateNhlSut() =>
@@ -434,7 +538,7 @@ public class LiguillaApplicationTests
             .ReturnsAsync(PicksOf(bracketB.Id, ("R2", new[] { 1, 2, 3, 4 }), ("CF", new[] { 90, 91 })));
 
         // Act
-        var result = await CreateNhlSut().GetStandingsAsync(QuinielaId);
+        var result = await CreateNhlSut().GetStandingsAsync(QuinielaId, UserId, isAdmin: false);
 
         // Assert
         result.Standings.Select(s => s.TotalPoints).Should().Equal(80, 80);
@@ -465,7 +569,7 @@ public class LiguillaApplicationTests
             .ReturnsAsync(PicksOf(bracket.Id, ("R2", new[] { 1, 2, 90, 91 })));
 
         // Act
-        var result = await CreateNhlSut().GetStandingsAsync(QuinielaId);
+        var result = await CreateNhlSut().GetStandingsAsync(QuinielaId, UserId, isAdmin: false);
 
         // Assert
         var item = result.Standings.Should().ContainSingle().Subject;

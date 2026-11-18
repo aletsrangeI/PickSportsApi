@@ -29,8 +29,20 @@ public class LiguillaApplication : ILiguillaApplication
         _simulationService = simulationService;
     }
 
+    /// <summary>SPEC-031: solo miembros activos de la quiniela (o admin) pueden leer overview y standings.</summary>
+    private async Task EnsureMemberOrAdminAsync(int quinielaId, int userId, bool isAdmin)
+    {
+        if (isAdmin) return;
+
+        var membership = await _unitOfWork.QuinielaMembers.GetMembershipAsync(quinielaId, userId);
+        if (membership == null)
+            throw new InvalidOperationException(NotMemberMessage);
+    }
+
     public async Task<LiguillaOverviewDto> GetOverviewAsync(int quinielaId, int userId, bool isAdmin, CancellationToken ct = default)
     {
+        await EnsureMemberOrAdminAsync(quinielaId, userId, isAdmin);
+
         var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
         if (quiniela == null)
             throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
@@ -266,8 +278,10 @@ public class LiguillaApplication : ILiguillaApplication
         return MapBracketDetail(existing, user, member?.Alias, nodes, strategy, picksByRound);
     }
 
-    public async Task<LiguillaStandingsDto> GetStandingsAsync(int quinielaId, CancellationToken ct = default)
+    public async Task<LiguillaStandingsDto> GetStandingsAsync(int quinielaId, int userId, bool isAdmin, CancellationToken ct = default)
     {
+        await EnsureMemberOrAdminAsync(quinielaId, userId, isAdmin);
+
         var quiniela = await _unitOfWork.Quinielas.GetAsync(quinielaId);
         if (quiniela == null)
             throw new KeyNotFoundException($"No se encontró la quiniela con Id {quinielaId}.");
@@ -417,7 +431,8 @@ public class LiguillaApplication : ILiguillaApplication
         await _unitOfWork.Save(ct);
 
         // Recalcular standings de la quiniela
-        await GetStandingsAsync(quinielaId, ct);
+        // Llamada interna de un flujo solo-admin: no aplica la validacion de membresia.
+        await GetStandingsAsync(quinielaId, userId: 0, isAdmin: true, ct);
         return true;
     }
 
