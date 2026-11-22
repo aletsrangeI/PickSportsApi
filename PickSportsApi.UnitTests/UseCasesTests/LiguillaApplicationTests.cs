@@ -154,6 +154,49 @@ public class LiguillaApplicationTests
     }
 
     [Fact]
+    public async Task GetOverview_FmfRegularSeasonFinishedAndQuarterFinalsNotReady_ReturnsWaitingField()
+    {
+        // Arrange: las 17 jornadas regulares puntuadas y ESPN aun no publica los cuartos
+        var quiniela = new Quiniela { Id = QuinielaId, League = FmfLeague(), LeagueId = LeagueId, Name = "Quiniela Amigos" };
+        var season = new Season { Id = SeasonId, LeagueId = LeagueId, IsCurrent = true };
+        var weeks = Enumerable.Range(1, 17)
+            .Select(number => new Week { SeasonId = SeasonId, WeekNumber = number, Status = "SCORED" })
+            .ToList();
+
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockUow.Setup(u => u.Seasons.GetCurrentSeasonAsync(LeagueId)).ReturnsAsync(season);
+        _mockUow.Setup(u => u.Weeks.GetBySeasonIdAsync(SeasonId)).ReturnsAsync(weeks);
+        _mockUow.Setup(u => u.Liguilla.GetNodesBySeasonAsync(SeasonId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<LiguillaNode>());
+        _mockUow.Setup(u => u.Liguilla.GetBracketAsync(QuinielaId, UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LiguillaBracket?)null);
+
+        // Act
+        var result = await _sut.GetOverviewAsync(QuinielaId, UserId, isAdmin: true);
+
+        // Assert
+        result.Status.Should().Be("WAITING_FIELD");
+    }
+
+    [Fact]
+    public async Task SeedSimulationNodes_FmfFormat_DelegatesToSimulationServiceWithoutTouchingNodesDirectly()
+    {
+        // Arrange
+        var quiniela = new Quiniela { Id = QuinielaId, League = FmfLeague(), LeagueId = LeagueId };
+        _mockUow.Setup(u => u.Quinielas.GetAsync(QuinielaId)).ReturnsAsync(quiniela);
+        _mockSimulation.Setup(s => s.SeedAsync(QuinielaId, It.IsAny<CancellationToken>())).ReturnsAsync(7);
+
+        // Act
+        var seeded = await _sut.SeedSimulationNodesAsync(QuinielaId);
+
+        // Assert
+        seeded.Should().BeTrue();
+        _mockSimulation.Verify(s => s.SeedAsync(QuinielaId, It.IsAny<CancellationToken>()), Times.Once);
+        _mockUow.Verify(u => u.Liguilla.AddNodeAsync(It.IsAny<LiguillaNode>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockUow.Verify(u => u.Liguilla.UpdateNodeAsync(It.IsAny<LiguillaNode>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task GetMyBracket_WithGenericPicks_ReturnsPicksByRound()
     {
         // Arrange

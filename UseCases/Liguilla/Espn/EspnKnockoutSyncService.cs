@@ -5,6 +5,7 @@ using Domain.Entities;
 using Interface.Persistence;
 using Interface.UseCases.Knockout;
 using Microsoft.Extensions.Logging;
+using UseCases.Liguilla.Strategies;
 
 namespace UseCases.Liguilla.Espn;
 
@@ -91,8 +92,16 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             return 0;
         }
 
+        var tiesBeforeWindow = ties.Count;
         ties = ties.Where(t => IsInSeasonWindow(t, start.Value, end.Value)).ToList();
-        if (ties.Count == 0) return 0;
+        if (ties.Count == 0)
+        {
+            if (tiesBeforeWindow > 0)
+                _logger.LogWarning(
+                    "[EspnKnockoutSync] Todos los cruces quedaron fuera de la ventana de la temporada ({Start:u} a {End:u}) para la liga {LeagueId} ({LeagueCode}).",
+                    start.Value, end.Value, leagueId, league.Code);
+            return 0;
+        }
 
         // NFL y NHL dependen de las siembras de standings: sin ellas no se siembra ni resuelve nada (se reintenta en el siguiente ciclo).
         if (UsesStandingsSeeds(strategy.FormatCode) && seeds.Count == 0)
@@ -163,7 +172,7 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
     // ── Descarga ──────────────────────────────────────────────────────────────
 
     private static bool UsesStandingsSeeds(string formatCode) =>
-        formatCode is KnockoutFormatCodes.NflReseededSingleGame or KnockoutFormatCodes.NhlBestOf7;
+        formatCode is KnockoutFormatCodes.NflReseededSingleGame or KnockoutFormatCodes.NhlBestOf7 or KnockoutFormatCodes.FmfLiguilla;
 
     /// <summary>Siembra de un equipo en standings: conferencia, division (solo NHL) y seed de conferencia.</summary>
     private sealed record TeamSeed(string Conference, string? Division, int Seed, bool IsDivisionWinner = false);
@@ -204,6 +213,13 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             if (standings != null)
                 seeds = _parser.ParseNhlPlayoffSeeds(standings)
                     .ToDictionary(p => p.Key, p => new TeamSeed(p.Value.Conference, p.Value.Division, p.Value.Seed, p.Value.IsDivisionWinner));
+        }
+        else if (formatCode == KnockoutFormatCodes.FmfLiguilla)
+        {
+            var standings = await FetchJsonAsync($"{StandingsBase}/{sport}/{leagueCode}/standings?season={season.Year}", ct);
+            if (standings != null)
+                seeds = _parser.ParseFmfPlayoffSeeds(standings)
+                    .ToDictionary(p => p.Key, p => new TeamSeed(string.Empty, null, p.Value));
         }
 
         // Solo se pide la ventana vigente (scoreboard sin "dates") cuando la temporada no trae ambas fechas.
@@ -302,6 +318,11 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             return;
         }
 
+        // Liguilla FMF, Cuartos: TeamA = mejor sembrado (el nodo N es el del seed N).
+        if (context.Strategy.FormatCode == KnockoutFormatCodes.FmfLiguilla && roundCode == FmfLiguillaStrategy.QuarterFinalRound
+            && SeedOf(seeds, away)?.Seed < SeedOf(seeds, home)?.Seed)
+            (home, away) = (away, home);
+
         var node = FindNode(context, roundCode, tie, home, away, seeds);
         if (node == null)
         {
@@ -340,6 +361,18 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
             if (offset.HasValue)
             {
                 var slot = context.RoundStart[roundCode] + offset.Value;
+                var target = inRound.FirstOrDefault(n => n.NodeNumber == slot);
+                return target != null && IsFree(target) ? target : null;
+            }
+        }
+
+        // FMF Cuartos: el cruce con el mejor seed N va al nodo N (1v8, 2v7, 3v6, 4v5).
+        if (context.Strategy.FormatCode == KnockoutFormatCodes.FmfLiguilla && roundCode == FmfLiguillaStrategy.QuarterFinalRound)
+        {
+            var best = new[] { SeedOf(seeds, home)?.Seed, SeedOf(seeds, away)?.Seed }.Where(s => s.HasValue).Select(s => s!.Value).DefaultIfEmpty().Min();
+            if (best > 0)
+            {
+                var slot = context.RoundStart[roundCode] + best - 1;
                 var target = inRound.FirstOrDefault(n => n.NodeNumber == slot);
                 return target != null && IsFree(target) ? target : null;
             }
@@ -523,9 +556,17 @@ public class EspnKnockoutSyncService : IEspnKnockoutSyncService
                 KnockoutPlayoffsSlug => InformativePlayoffRound,
                 _ => null
             },
+            KnockoutFormatCodes.FmfLiguilla =>
+                EndsWithSlug(tie.RoundSlug, "---quarterfinals") ? FmfLiguillaStrategy.QuarterFinalRound
+                : EndsWithSlug(tie.RoundSlug, "---semifinals") ? FmfLiguillaStrategy.SemiFinalRound
+                : EndsWithSlug(tie.RoundSlug, "---finals") ? FmfLiguillaStrategy.FinalRound
+                : null,
             _ => null
         };
     }
+
+    private static bool EndsWithSlug(string? slug, string suffix) =>
+        slug != null && slug.EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
 
     private static bool Contains(string text, string fragment) =>
         text.Contains(fragment, StringComparison.OrdinalIgnoreCase);

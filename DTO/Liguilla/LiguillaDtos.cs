@@ -85,7 +85,7 @@ public class LiguillaOverviewDto
     public bool IsAvailable { get; set; }
     public string? FormatCode { get; set; }
     public List<LiguillaRoundDto> Rounds { get; set; } = new();
-    public string Status { get; set; } = "HIDDEN"; // "HIDDEN", "WAITING_PLAY_IN", "OPEN_FOR_PICKS", "LOCKED_IN_PROGRESS", "FINISHED"
+    public string Status { get; set; } = "HIDDEN"; // "HIDDEN", "WAITING_FIELD", "OPEN_FOR_PICKS", "LOCKED_IN_PROGRESS", "FINISHED"
     public DateTime? LockDeadlineUtc { get; set; }
     public List<LiguillaTeamDto> QualifiedTeams { get; set; } = new();
     public List<LiguillaNodeDto> Nodes { get; set; } = new();

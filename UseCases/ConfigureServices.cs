@@ -65,6 +65,7 @@ public static class ConfigureServices
         services.AddScoped<IKnockoutSimulationBuilder, UseCases.Liguilla.Simulation.NhlSimulationBuilder>();
         services.AddScoped<IKnockoutSimulationBuilder, UseCases.Liguilla.Simulation.NflSimulationBuilder>();
         services.AddScoped<IKnockoutSimulationBuilder, UseCases.Liguilla.Simulation.UefaSimulationBuilder>();
+        services.AddScoped<IKnockoutSimulationBuilder, UseCases.Liguilla.Simulation.FmfSimulationBuilder>();
         services.AddScoped<IKnockoutSimulationService, UseCases.Liguilla.Simulation.KnockoutSimulationService>();
         services.AddScoped<ILiguillaApplication, UseCases.Liguilla.LiguillaApplication>();
         services.AddSingleton<UseCases.Challenges.ChallengeScoringEngine>();

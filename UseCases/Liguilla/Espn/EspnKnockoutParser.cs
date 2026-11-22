@@ -57,8 +57,62 @@ public class EspnKnockoutParser : IEspnKnockoutParser
 
     public IReadOnlyCollection<string> SupportedFormatCodes { get; } = new[]
     {
-        KnockoutFormatCodes.NhlBestOf7, KnockoutFormatCodes.NflReseededSingleGame, KnockoutFormatCodes.UefaTwoLeg
+        KnockoutFormatCodes.NhlBestOf7, KnockoutFormatCodes.NflReseededSingleGame, KnockoutFormatCodes.UefaTwoLeg,
+        KnockoutFormatCodes.FmfLiguilla
     };
+
+    private const string RankStatName = "rank";
+    private const int MaxFmfPlayoffSeed = 8;
+    private static readonly string[] FmfKnockoutSlugSuffixes = { "---quarterfinals", "---semifinals", "---finals" };
+
+    public IReadOnlyDictionary<string, int> ParseFmfPlayoffSeeds(string standingsJson)
+    {
+        var seeds = new Dictionary<string, int>();
+        if (string.IsNullOrWhiteSpace(standingsJson)) return seeds;
+
+        try
+        {
+            using var document = JsonDocument.Parse(standingsJson);
+            var entries = FmfGeneralTableEntries(document.RootElement);
+            var ranked = new List<(string TeamId, int Rank)>();
+            var position = 0;
+            foreach (var entry in entries)
+            {
+                position++;
+                var teamId = Text(Prop(Prop(entry, "team"), "id"));
+                if (string.IsNullOrWhiteSpace(teamId)) continue;
+
+                var rankStat = ReadStatNumber(entry, RankStatName);
+                var rank = rankStat.HasValue && rankStat.Value == Math.Floor(rankStat.Value) ? (int)rankStat.Value : position;
+                ranked.Add((teamId, rank));
+            }
+
+            foreach (var item in ranked.OrderBy(r => r.Rank))
+            {
+                if (item.Rank < MinPlayoffSeed || item.Rank > MaxFmfPlayoffSeed) continue;
+                seeds.TryAdd(item.TeamId, item.Rank);
+            }
+        }
+        catch (JsonException)
+        {
+            // JSON mal formado: sin tabla; el sync lo trata como "campo no listo".
+            return new Dictionary<string, int>();
+        }
+
+        return seeds;
+    }
+
+    /// <summary>Tabla general de la liga: el primer grupo con entradas (ESPN publica un solo grupo para Liga MX) o, si no hay grupos, la tabla raiz.</summary>
+    private static List<JsonElement> FmfGeneralTableEntries(JsonElement root)
+    {
+        foreach (var group in Items(Prop(root, "children")))
+        {
+            var entries = Items(Prop(Prop(group, "standings"), "entries")).ToList();
+            if (entries.Count > 0) return entries;
+        }
+
+        return Items(Prop(Prop(root, "standings"), "entries")).ToList();
+    }
 
     public IReadOnlyList<EspnKnockoutTie> ParseScoreboard(string json, string formatCode)
     {
@@ -255,6 +309,10 @@ public class EspnKnockoutParser : IEspnKnockoutParser
             ? Prop(series, "completed").ValueKind == JsonValueKind.True
             : Prop(Prop(Prop(competition, "status"), "type"), "completed").ValueKind == JsonValueKind.True;
 
+        var winnerId = completed ? WinnerOf(hasSeries ? seriesCompetitors : competitors, hasSeries) : null;
+        if (winnerId == null && completed && hasSeries && formatCode == KnockoutFormatCodes.FmfLiguilla)
+            winnerId = FmfWinnerWithoutFlag(seriesCompetitors, homeId);
+
         var tie = new EspnKnockoutTie
         {
             GroupKey = BuildGroupKey(slug, pair[0], pair[1]),
@@ -263,7 +321,7 @@ public class EspnKnockoutParser : IEspnKnockoutParser
             LegNumber = IntOf(Prop(Prop(competition, "leg"), "value")),
             TotalLegs = hasSeries ? IntOf(Prop(series, "totalCompetitions")) ?? 1 : 1,
             SeriesCompleted = completed,
-            WinnerEspnTeamId = completed ? WinnerOf(hasSeries ? seriesCompetitors : competitors, hasSeries) : null,
+            WinnerEspnTeamId = winnerId,
             Wins = hasSeries ? NumbersOf(seriesCompetitors, "wins", value => (int)value) : new Dictionary<string, int>(),
             AggregateScore = hasSeries ? NumbersOf(seriesCompetitors, "aggregateScore", value => value) : new Dictionary<string, double>(),
             HomeEspnTeamId = homeId,
@@ -279,8 +337,30 @@ public class EspnKnockoutParser : IEspnKnockoutParser
     {
         KnockoutFormatCodes.NhlBestOf7 or KnockoutFormatCodes.NflReseededSingleGame => slug == PostSeasonSlug,
         KnockoutFormatCodes.UefaTwoLeg =>UefaKnockoutSlugs.Contains(slug),
+        KnockoutFormatCodes.FmfLiguilla => FmfKnockoutSlugSuffixes.Any(s => slug.EndsWith(s, StringComparison.OrdinalIgnoreCase)),
         _ => false
     };
+
+    /// <summary>
+    /// Liga MX: ESPN no marca <c>winner</c> cuando el global queda empatado (medido en Clausura 2026, UNAM vs America: ambos
+    /// <c>winner=false</c>, global 6-6 y goles de visitante 3-3) y su <c>notes[0].headline</c> es poco fiable ("AME win on away goals"
+    /// aunque avanzo UNAM). Criterio: gana el de mayor global; si empatan, el local de la vuelta, que es el mejor sembrado
+    /// (en la vuelta de los 6 cruces empatados de Clausura 2026 siempre avanzo el local de la vuelta). Se evalua sobre el evento
+    /// de la vuelta, por eso <paramref name="homeId"/> es el local del evento que cierra la serie.
+    /// </summary>
+    private static string? FmfWinnerWithoutFlag(List<JsonElement> seriesCompetitors, string? homeId)
+    {
+        var aggregates = seriesCompetitors
+            .Select(c => (Id: Text(Prop(c, "id")), Aggregate: Prop(c, "aggregateScore")))
+            .Where(x => x.Id != null && x.Aggregate.ValueKind == JsonValueKind.Number)
+            .Select(x => (x.Id, Value: x.Aggregate.GetDouble()))
+            .OrderByDescending(x => x.Value)
+            .ToList();
+        if (aggregates.Count < 2) return null;
+        if (aggregates[0].Value > aggregates[1].Value) return aggregates[0].Id;
+
+        return homeId != null && aggregates.Any(a => a.Id == homeId) ? homeId : null;
+    }
 
     private static string? ConferenceOf(string formatCode, string headline)
     {

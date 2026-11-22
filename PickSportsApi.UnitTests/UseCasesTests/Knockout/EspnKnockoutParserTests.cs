@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Domain.Common;
 using Interface.UseCases.Knockout;
 using UseCases.Liguilla.Espn;
 
@@ -141,9 +142,202 @@ public class EspnKnockoutParserTests
     {
         var json = Fixture("nhl-playoffs-20260420");
 
-        var ties = _parser.ParseScoreboard(json, "FMF_LIGUILLA");
+        var ties = _parser.ParseScoreboard(json, "UNKNOWN_FORMAT");
 
         ties.Should().BeEmpty();
+    }
+
+    // ---- Liga MX (FMF_LIGUILLA): fixtures minimos derivados de scoreboard mex.1 Clausura 2026 ----
+
+    private static string FmfEvent(string slug, int leg, string homeId, string awayId, bool completed,
+        string headline, string? winnerId, double aggHome, double aggAway, string date)
+    {
+        string Winner(string id) => winnerId == null ? "false" : (id == winnerId ? "true" : "false");
+        return $$"""
+            {
+              "date": "{{date}}",
+              "season": { "slug": "{{slug}}" },
+              "competitions": [{
+                "leg": { "value": {{leg}} },
+                "notes": [{ "headline": "{{headline}}" }],
+                "series": {
+                  "completed": {{(completed ? "true" : "false")}},
+                  "totalCompetitions": 2,
+                  "competitors": [
+                    { "id": "{{homeId}}", "winner": {{Winner(homeId)}}, "aggregateScore": {{aggHome.ToString(System.Globalization.CultureInfo.InvariantCulture)}} },
+                    { "id": "{{awayId}}", "winner": {{Winner(awayId)}}, "aggregateScore": {{aggAway.ToString(System.Globalization.CultureInfo.InvariantCulture)}} }
+                  ]
+                },
+                "competitors": [
+                  { "homeAway": "home", "id": "{{homeId}}", "team": { "id": "{{homeId}}" } },
+                  { "homeAway": "away", "id": "{{awayId}}", "team": { "id": "{{awayId}}" } }
+                ]
+              }]
+            }
+            """;
+    }
+
+    private static string FmfScoreboard(params string[] events) => "{\"events\":[" + string.Join(",", events) + "]}";
+
+    private const string FmfQf = "clausura---quarterfinals";
+
+    [Fact]
+    public void ParseScoreboard_FmfSupportedFormat_IsListed()
+    {
+        _parser.SupportedFormatCodes.Should().Contain(KnockoutFormatCodes.FmfLiguilla);
+    }
+
+    [Fact]
+    public void ParseScoreboard_FmfSecondLegWithWinnerFlag_ReturnsGroupedTieWithWinner()
+    {
+        var json = FmfScoreboard(
+            FmfEvent(FmfQf, 1, "232", "219", false, "1st Leg", null, 1, 3, "2026-05-02T01:00Z"),
+            FmfEvent(FmfQf, 2, "219", "232", true,
+                "2nd Leg - Tied on aggregate - Guadalajara advanced for being the higher seed", "219", 3, 3, "2026-05-09T01:00Z"));
+
+        var ties = _parser.ParseScoreboard(json, KnockoutFormatCodes.FmfLiguilla);
+
+        var tie = ties.Should().ContainSingle().Subject;
+        tie.RoundSlug.Should().Be(FmfQf);
+        tie.GroupKey.Should().Be("clausura---quarterfinals:219-232");
+        tie.TotalLegs.Should().Be(2);
+        tie.SeriesCompleted.Should().BeTrue();
+        tie.WinnerEspnTeamId.Should().Be("219");
+        tie.KickoffUtc.Should().Be(new DateTime(2026, 5, 2, 1, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void ParseScoreboard_FmfAggregateWinnerFlagged_ReturnsFlaggedWinner()
+    {
+        var json = FmfScoreboard(
+            FmfEvent(FmfQf, 2, "216", "218", true, "2nd Leg - Cruz Azul advance 4-2 on aggregate", "218", 2, 4, "2026-05-10T01:00Z"));
+
+        var ties = _parser.ParseScoreboard(json, KnockoutFormatCodes.FmfLiguilla);
+
+        ties.Single().WinnerEspnTeamId.Should().Be("218");
+    }
+
+    [Fact]
+    public void ParseScoreboard_FmfTiedWithoutWinnerFlag_ReturnsHomeTeamOfSecondLegAsHigherSeed()
+    {
+        // Caso real UNAM (233, local de la vuelta) vs America (227): ESPN deja winner=false en ambos y el headline
+        // dice "AME win on away goals" aunque avanzo UNAM; el criterio es el local de la vuelta (mejor sembrado).
+        var json = FmfScoreboard(
+            FmfEvent(FmfQf, 1, "227", "233", false, "1st Leg", null, 3, 3, "2026-05-03T23:00Z"),
+            FmfEvent(FmfQf, 2, "233", "227", true,
+                "2nd Leg - Tied on aggregate - AME win on away goals", null, 6, 6, "2026-05-11T01:15Z"));
+
+        var ties = _parser.ParseScoreboard(json, KnockoutFormatCodes.FmfLiguilla);
+
+        var tie = ties.Should().ContainSingle().Subject;
+        tie.SeriesCompleted.Should().BeTrue();
+        tie.WinnerEspnTeamId.Should().Be("233");
+    }
+
+    [Fact]
+    public void ParseScoreboard_FmfCompletedWithoutFlagButDifferentAggregate_ReturnsHigherAggregate()
+    {
+        var json = FmfScoreboard(
+            FmfEvent(FmfQf, 2, "234", "223", true, "2nd Leg - Pachuca advance 3-0 on aggregate", null, 0, 3, "2026-05-10T01:00Z"));
+
+        var ties = _parser.ParseScoreboard(json, KnockoutFormatCodes.FmfLiguilla);
+
+        ties.Single().WinnerEspnTeamId.Should().Be("223");
+    }
+
+    [Fact]
+    public void ParseScoreboard_FmfFirstLegOnly_ReturnsUnresolvedTie()
+    {
+        var json = FmfScoreboard(
+            FmfEvent(FmfQf, 1, "227", "233", false, "1st Leg", null, 3, 3, "2026-05-03T23:00Z"));
+
+        var ties = _parser.ParseScoreboard(json, KnockoutFormatCodes.FmfLiguilla);
+
+        ties.Single().SeriesCompleted.Should().BeFalse();
+        ties.Single().WinnerEspnTeamId.Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("clausura---quarterfinals")]
+    [InlineData("apertura---semifinals")]
+    [InlineData("clausura---finals")]
+    public void ParseScoreboard_FmfKnockoutSlugs_AreRecognizedAndKeptInRoundSlug(string slug)
+    {
+        var json = FmfScoreboard(FmfEvent(slug, 1, "1", "2", false, "1st Leg", null, 0, 0, "2026-05-03T23:00Z"));
+
+        var ties = _parser.ParseScoreboard(json, KnockoutFormatCodes.FmfLiguilla);
+
+        ties.Single().RoundSlug.Should().Be(slug);
+    }
+
+    [Fact]
+    public void ParseScoreboard_FmfRegularSeasonEvent_IsIgnored()
+    {
+        var json = FmfScoreboard(
+            FmfEvent("torneo-clausura", 1, "1", "2", false, "", null, 0, 0, "2026-02-03T23:00Z"));
+
+        var ties = _parser.ParseScoreboard(json, KnockoutFormatCodes.FmfLiguilla);
+
+        ties.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ParseScoreboard_FmfSlugForOtherFormat_IsNotParsedAsUefa()
+    {
+        var json = FmfScoreboard(FmfEvent(FmfQf, 1, "1", "2", false, "1st Leg", null, 0, 0, "2026-05-03T23:00Z"));
+
+        var ties = _parser.ParseScoreboard(json, KnockoutFormatCodes.UefaTwoLeg);
+
+        ties.Should().BeEmpty();
+    }
+
+    private static string FmfStandingsEntry(string teamId, int? rank, int points)
+    {
+        var rankStat = rank.HasValue ? $"{{ \"name\": \"rank\", \"value\": {rank.Value} }}," : string.Empty;
+        return $"{{ \"team\": {{ \"id\": \"{teamId}\" }}, \"stats\": [ {rankStat} {{ \"name\": \"points\", \"value\": {points} }} ] }}";
+    }
+
+    [Fact]
+    public void ParseFmfPlayoffSeeds_GeneralTable_ReturnsOnlyTopEightByRank()
+    {
+        // Entradas desordenadas a proposito: el seed sale de la estadistica rank, no del orden del JSON.
+        var entries = new List<string>();
+        for (var rank = 10; rank >= 1; rank--) entries.Add(FmfStandingsEntry((200 + rank).ToString(), rank, 40 - rank));
+        var json = "{\"children\":[{\"name\":\"2026 Torneo Apertura\",\"standings\":{\"entries\":[" + string.Join(",", entries) + "]}}]}";
+
+        var seeds = _parser.ParseFmfPlayoffSeeds(json);
+
+        seeds.Should().HaveCount(8);
+        seeds["201"].Should().Be(1);
+        seeds["204"].Should().Be(4);
+        seeds["208"].Should().Be(8);
+        seeds.Should().NotContainKey("209");
+        seeds.Should().NotContainKey("210");
+    }
+
+    [Fact]
+    public void ParseFmfPlayoffSeeds_EntriesWithoutRankStat_UseTableOrder()
+    {
+        var json = "{\"children\":[{\"standings\":{\"entries\":[" +
+                   FmfStandingsEntry("218", null, 32) + "," + FmfStandingsEntry("227", null, 30) + "]}}]}";
+
+        var seeds = _parser.ParseFmfPlayoffSeeds(json);
+
+        seeds["218"].Should().Be(1);
+        seeds["227"].Should().Be(2);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{no")]
+    [InlineData("{}")]
+    [InlineData("{\"children\":[]}")]
+    public void ParseFmfPlayoffSeeds_InvalidOrMissingTable_ReturnsEmptyWithoutThrowing(string json)
+    {
+        var act = () => _parser.ParseFmfPlayoffSeeds(json);
+
+        act.Should().NotThrow();
+        act().Should().BeEmpty();
     }
 
     [Fact]

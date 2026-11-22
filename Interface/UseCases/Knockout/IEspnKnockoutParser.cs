@@ -17,6 +17,12 @@ public interface IEspnKnockoutParser
     /// (<c>children[]</c> = conferencias, <c>children[].children[]</c> = divisiones). Solo equipos con seed 1..8.
     /// </summary>
     IReadOnlyDictionary<string, NhlPlayoffSeed> ParseNhlPlayoffSeeds(string standingsJson);
+
+    /// <summary>
+    /// Liga MX (FMF_LIGUILLA): posicion 1..8 de la tabla general por EspnTeamId desde standings (solo los 8 primeros, sin Play-In).
+    /// Devuelve vacio si el JSON no trae la tabla; nunca lanza.
+    /// </summary>
+    IReadOnlyDictionary<string, int> ParseFmfPlayoffSeeds(string standingsJson);
 }
 
 /// <summary>

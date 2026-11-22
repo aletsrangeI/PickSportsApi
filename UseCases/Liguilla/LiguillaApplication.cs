@@ -92,7 +92,7 @@ public class LiguillaApplication : ILiguillaApplication
         else if (!isRegularSeasonFinished)
             status = isAdmin ? "ADMIN_PREVIEW_HIDDEN" : HiddenStatus;
         else
-            status = "WAITING_PLAY_IN";
+            status = "WAITING_FIELD";
 
         // Mapear equipos clasificados con su siembra
         var qualifiedTeams = new List<LiguillaTeamDto>();
@@ -642,141 +642,8 @@ public class LiguillaApplication : ILiguillaApplication
         if (strategy == null)
             throw new InvalidOperationException(NoStrategyMessage);
 
-        // Los demás formatos (NHL, NFL, Champions) siembran con la tabla de ESPN de hoy.
-        if (strategy.FormatCode != FmfLiguillaStrategy.Code)
-        {
-            await _simulationService.SeedAsync(quinielaId, ct);
-            return true;
-        }
-
-        var seasonId = await QuinielaSeasonResolver.ResolveSeasonIdAsync(_unitOfWork, quiniela);
-        if (seasonId == null)
-            throw new InvalidOperationException("No se encontró una temporada activa para esta liga.");
-
-        // Obtener equipos de la liga ordenados por puntos o por ESPN Standings
-        // Orden top 8 oficial de Liga MX Apertura 2026 actual según ESPN:
-        // 1: América (AME, 227), 2: Toluca (TOL, 223), 3: Querétaro (QRO, 222), 4: Guadalajara (GDL, 219),
-        // 5: León (LEO, 228), 6: Atlas (ATS, 216), 7: Cruz Azul (CAZ, 218), 8: Tijuana (TIJ, 10125)
-        var leagueTeams = (await _unitOfWork.Teams.GetByLeagueIdAsync(quiniela.LeagueId.Value)).ToList();
-        
-        var top8EspnIds = new[] { "227", "223", "222", "219", "228", "216", "218", "10125" };
-        var top8Teams = new List<Team>();
-
-        foreach (var espnId in top8EspnIds)
-        {
-            var match = leagueTeams.FirstOrDefault(t => t.EspnTeamId == espnId);
-            if (match != null)
-            {
-                top8Teams.Add(match);
-            }
-        }
-
-        // Si por alguna razón faltan equipos específicos, rellenar con los primeros disponibles de la liga
-        foreach (var t in leagueTeams)
-        {
-            if (top8Teams.Count >= 8) break;
-            if (!top8Teams.Any(existing => existing.Id == t.Id))
-            {
-                top8Teams.Add(t);
-            }
-        }
-
-        if (top8Teams.Count < 8)
-            throw new InvalidOperationException($"Se requieren al menos 8 equipos en la liga para sembrar la Liguilla. Encontrados: {top8Teams.Count}.");
-
-        // Equipos con sus siembras:
-        // 1: top8Teams[0], 2: top8Teams[1], 3: top8Teams[2], 4: top8Teams[3]
-        // 5: top8Teams[4], 6: top8Teams[5], 7: top8Teams[6], 8: top8Teams[7]
-        var existingNodes = await _unitOfWork.Liguilla.GetNodesBySeasonAsync(seasonId.Value, ct);
-        var kickoffSimulation = DateTime.UtcNow.AddDays(7); // Tiempo suficiente para pronosticar
-
-        // Cuartos de Final (Reglamento FMF):
-        // Serie 1: 1° vs 8°
-        // Serie 2: 2° vs 7°
-        // Serie 3: 3° vs 6°
-        // Serie 4: 4° vs 5°
-        var matchups = new[]
-        {
-            (nodeNumber: 1, teamA: top8Teams[0], seedA: 1, teamB: top8Teams[7], seedB: 8),
-            (nodeNumber: 2, teamA: top8Teams[1], seedA: 2, teamB: top8Teams[6], seedB: 7),
-            (nodeNumber: 3, teamA: top8Teams[2], seedA: 3, teamB: top8Teams[5], seedB: 6),
-            (nodeNumber: 4, teamA: top8Teams[3], seedA: 4, teamB: top8Teams[4], seedB: 5),
-        };
-
-        foreach (var (nodeNumber, teamA, seedA, teamB, seedB) in matchups)
-        {
-            var node = existingNodes.FirstOrDefault(n => n.NodeNumber == nodeNumber);
-            if (node == null)
-            {
-                node = new LiguillaNode
-                {
-                    SeasonId = seasonId.Value,
-                    Round = "QF",
-                    NodeNumber = nodeNumber,
-                    TeamAId = teamA.Id,
-                    TeamBId = teamB.Id,
-                    SeedA = seedA,
-                    SeedB = seedB,
-                    KickoffUtc = kickoffSimulation,
-                    IsResolved = false,
-                    Active = true
-                };
-                await _unitOfWork.Liguilla.AddNodeAsync(node, ct);
-            }
-            else
-            {
-                node.TeamAId = teamA.Id;
-                node.TeamBId = teamB.Id;
-                node.SeedA = seedA;
-                node.SeedB = seedB;
-                node.KickoffUtc = kickoffSimulation;
-                node.IsResolved = false;
-                node.WinnerTeamId = null;
-                await _unitOfWork.Liguilla.UpdateNodeAsync(node, ct);
-            }
-        }
-
-        // Semifinales (Nodos 5 y 6) y Final (Nodo 7) vacías a la espera de resolución de QF
-        var laterNodes = new[]
-        {
-            (nodeNumber: 5, round: "SF"),
-            (nodeNumber: 6, round: "SF"),
-            (nodeNumber: 7, round: "FINAL")
-        };
-
-        foreach (var (nodeNumber, round) in laterNodes)
-        {
-            var node = existingNodes.FirstOrDefault(n => n.NodeNumber == nodeNumber);
-            if (node == null)
-            {
-                node = new LiguillaNode
-                {
-                    SeasonId = seasonId.Value,
-                    Round = round,
-                    NodeNumber = nodeNumber,
-                    TeamAId = null,
-                    TeamBId = null,
-                    SeedA = null,
-                    SeedB = null,
-                    KickoffUtc = kickoffSimulation.AddDays(nodeNumber == 7 ? 14 : 7),
-                    IsResolved = false,
-                    Active = true
-                };
-                await _unitOfWork.Liguilla.AddNodeAsync(node, ct);
-            }
-            else
-            {
-                node.TeamAId = null;
-                node.TeamBId = null;
-                node.SeedA = null;
-                node.SeedB = null;
-                node.WinnerTeamId = null;
-                node.IsResolved = false;
-                await _unitOfWork.Liguilla.UpdateNodeAsync(node, ct);
-            }
-        }
-
-        await _unitOfWork.Save(ct);
+        // Todos los formatos (FMF, NHL, NFL, Champions) siembran con la tabla de ESPN de hoy.
+        await _simulationService.SeedAsync(quinielaId, ct);
         return true;
     }
 }
