@@ -51,8 +51,27 @@ public class ModelIntegrityTests : IDisposable
 
         var configs = await _context.SystemConfigs.ToListAsync();
         Assert.NotEmpty(configs);
-        Assert.Contains(configs, c => c.Key == "App:MinSupportedClientVersion" && c.Value == "1.0.0");
-        Assert.Contains(configs, c => c.Key == "App:LatestClientVersion" && c.Value == "1.0.0");
+        Assert.Contains(configs, c => c.Key == "App:MinSupportedClientVersion" && c.Value == "1.9.0");
+        Assert.Contains(configs, c => c.Key == "App:LatestClientVersion" && c.Value == "1.9.0");
+    }
+
+    [Fact]
+    public async Task DatabaseInitializer_RaisesExistingClientVersionsToFloor_AndNeverLowersThem()
+    {
+        // Arrange: una base ya desplegada con 1.3.0 como minima y un valor futuro (2.0.0) como ultima
+        _context.SystemConfigs.AddRange(
+            new SystemConfig { Key = "App:MinSupportedClientVersion", Value = "1.3.0", IsPublic = true, Active = true },
+            new SystemConfig { Key = "App:LatestClientVersion", Value = "2.0.0", IsPublic = true, Active = true });
+        await _context.SaveChangesAsync();
+        var initializer = new DatabaseInitializer(_context, new NullLogger<DatabaseInitializer>());
+
+        // Act
+        await initializer.SeedAsync();
+
+        // Assert
+        var configs = await _context.SystemConfigs.ToListAsync();
+        Assert.Equal("1.9.0", configs.Single(c => c.Key == "App:MinSupportedClientVersion").Value);
+        Assert.Equal("2.0.0", configs.Single(c => c.Key == "App:LatestClientVersion").Value);
     }
 
     [Fact]

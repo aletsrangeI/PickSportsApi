@@ -15,6 +15,8 @@ public class DatabaseInitializer
     private const int NflRegularWeeksCount = 18;
     /// <summary>Valor por defecto de <c>League.WeeksCount</c>.</summary>
     private const int DefaultWeeksCount = 17;
+    /// <summary>Version minima obligatoria del cliente (release 1.9.0). Subirla fuerza la actualizacion de la PWA.</summary>
+    private const string ClientVersionFloor = "1.9.0";
 
     private readonly ApplicationDbContext _context;
     private readonly ILogger<DatabaseInitializer> _logger;
@@ -37,6 +39,7 @@ public class DatabaseInitializer
             await SeedAdminUserAsync();
             await SeedSystemConfigsAsync();
             await _context.SaveChangesAsync();
+            await EnforceClientVersionFloorAsync();
             _logger.LogInformation("Database seeding completed successfully.");
         }
         catch (Exception ex)
@@ -244,6 +247,29 @@ public class DatabaseInitializer
                 });
             }
         }
+    }
+
+    /// <summary>
+    /// Sube (nunca baja) <c>App:MinSupportedClientVersion</c> y <c>App:LatestClientVersion</c> al piso del release vigente.
+    /// El valor de la tabla SystemConfigs tiene prioridad sobre appsettings y el seed solo inserta si falta la fila,
+    /// por lo que sin esto una actualizacion obligatoria nunca llegaria a una base ya existente.
+    /// </summary>
+    private async Task EnforceClientVersionFloorAsync()
+    {
+        foreach (var key in new[] { "App:MinSupportedClientVersion", "App:LatestClientVersion" })
+        {
+            var config = await _context.SystemConfigs.FirstOrDefaultAsync(c => c.Key == key);
+            if (config == null) continue;
+
+            var current = Version.TryParse(config.Value, out var parsed) ? parsed : new Version(0, 0, 0);
+            if (current >= Version.Parse(ClientVersionFloor)) continue;
+
+            config.Value = ClientVersionFloor;
+            config.Active = true;
+            _logger.LogInformation("{Key} elevada de {Old} a {New}.", key, current, ClientVersionFloor);
+        }
+
+        await _context.SaveChangesAsync();
     }
 
     private static string HashPassword(string password)
