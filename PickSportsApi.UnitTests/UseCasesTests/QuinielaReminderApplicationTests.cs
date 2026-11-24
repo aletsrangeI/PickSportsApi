@@ -549,6 +549,7 @@ public class QuinielaReminderApplicationTests
 
         _mockLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(log =>
             log.NotificationType == "LIGUILLA_ANNOUNCED" &&
+            log.WeekId == 117 && // FK a Weeks: la última jornada regular (Id 100 + 17), nunca 0
             log.QuinielaId == 1)),
             Times.Once);
     }

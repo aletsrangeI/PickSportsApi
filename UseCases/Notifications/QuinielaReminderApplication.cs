@@ -255,7 +255,8 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
         await _unitOfWork.PushNotificationLogs.InsertAsync(new PushNotificationLog
         {
             NotificationType = "LIGUILLA_ANNOUNCED",
-            WeekId = 0,
+            // WeekId tiene FK a Weeks: con 0 el INSERT falla y el aviso se reenviaría en cada ciclo. Se ancla a la última jornada regular.
+            WeekId = regularWeeks.OrderByDescending(w => w.WeekNumber).First().Id,
             QuinielaId = quiniela.Id,
             UserId = null,
             DateLocal = todayDateStr,

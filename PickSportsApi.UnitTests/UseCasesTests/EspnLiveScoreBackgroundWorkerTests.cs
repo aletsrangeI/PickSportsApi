@@ -388,6 +388,78 @@ public class EspnLiveScoreBackgroundWorkerTests
             x.NotificationType == "WEEK_PODIUM" && x.WeekId == 100 && x.QuinielaId == 50)), Times.Once);
     }
 
+    private Mock<IScoringApplication> ArrangeFinalRegularWeekSweep(DateTime now, bool seasonAlreadySent)
+    {
+        // Jornada 17 de 17: la última de la fase regular
+        ArrangePodiumSweep(now.AddHours(-38), alreadySent: false);
+        _mockLeagues.Setup(l => l.GetAsync(10)).ReturnsAsync(new League { Id = 10, WeeksCount = 17 });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week>
+        {
+            new() { Id = 100, SeasonId = 1, WeekNumber = 17, Status = "SCORED", ScoredAt = now.AddHours(-38), Active = true }
+        });
+        _mockPushNotificationLogs.Setup(l => l.HasSeasonPodiumBeenSentAsync(100, 50, It.IsAny<CancellationToken>())).ReturnsAsync(seasonAlreadySent);
+
+        var scoring = new Mock<IScoringApplication>();
+        scoring.Setup(s => s.GetStandingsAsync(50, 100)).ReturnsAsync(new Response<QuinielaStandingsResponseDto>
+        {
+            isSuccess = true,
+            Data = new QuinielaStandingsResponseDto
+            {
+                // La tabla semanal NO debe usarse: aquí el semanal lo lidera otro miembro
+                WeeklyStandings = new List<MemberStandingDto> { new() { Rank = 1, Alias = "Tanis", Hits = 4 } },
+                GeneralStandings = new List<MemberStandingDto>
+                {
+                    new() { Rank = 1, Alias = "Oso", Hits = 66 },
+                    new() { Rank = 2, Alias = "Ale", DisplayName = "Alejandra", Hits = 64 },
+                    new() { Rank = 3, Alias = "Misa", Hits = 63 },
+                    new() { Rank = 4, Alias = "Tanis", Hits = 62 }
+                }
+            }
+        });
+        return scoring;
+    }
+
+    [Fact]
+    public async Task AnnounceMissingPodiums_FinalRegularWeek_AnnouncesGeneralTop3NotWeeklyPodium()
+    {
+        // Arrange
+        var now = new DateTime(2026, 11, 24, 17, 0, 0, DateTimeKind.Utc);
+        var scoring = ArrangeFinalRegularWeekSweep(now, seasonAlreadySent: false);
+        var bulletinApp = new Mock<IBulletinApplication>(); // el podio semanal no debe consultarse
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        // Act
+        var sent = await worker.AnnounceMissingPodiumsAsync(_mockUow.Object, _mockWebPush.Object, bulletinApp.Object, now, default, scoring.Object);
+
+        // Assert
+        Assert.Equal(1, sent);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            50,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("campeones")
+                && p.Message.Contains("🥇 Oso (66 aciertos)") && p.Message.Contains("🥈 Alejandra (64 aciertos)")
+                && p.Message.Contains("🥉 Misa (63 aciertos)") && !p.Message.Contains("Tanis")),
+            default), Times.Once);
+        _mockPushNotificationLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(x =>
+            x.NotificationType == "SEASON_PODIUM" && x.WeekId == 100 && x.QuinielaId == 50)), Times.Once);
+        bulletinApp.Verify(b => b.GetBulletinAsync(It.IsAny<int>(), It.IsAny<int?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AnnounceMissingPodiums_FinalRegularWeek_WhenSeasonPodiumAlreadySent_DoesNotRepeat()
+    {
+        // Arrange
+        var now = new DateTime(2026, 11, 24, 17, 0, 0, DateTimeKind.Utc);
+        var scoring = ArrangeFinalRegularWeekSweep(now, seasonAlreadySent: true);
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        // Act
+        var sent = await worker.AnnounceMissingPodiumsAsync(_mockUow.Object, _mockWebPush.Object, new Mock<IBulletinApplication>().Object, now, default, scoring.Object);
+
+        // Assert
+        Assert.Equal(0, sent);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(It.IsAny<int>(), It.IsAny<PushNotificationPayload>(), default), Times.Never);
+    }
+
     [Fact]
     public async Task AnnounceMissingPodiums_WhenAlreadySent_DoesNotSendAgain()
     {

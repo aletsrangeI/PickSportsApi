@@ -63,7 +63,7 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
 
                 try
                 {
-                    await AnnounceMissingPodiumsAsync(unitOfWork, webPush, bulletinApp, DateTime.UtcNow, stoppingToken);
+                    await AnnounceMissingPodiumsAsync(unitOfWork, webPush, bulletinApp, DateTime.UtcNow, stoppingToken, scoringApp);
                 }
                 catch (Exception podiumEx) when (podiumEx is not OperationCanceledException)
                 {
@@ -578,6 +578,11 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
 
         var quinielas = await GetQuinielasForWeekAsync(week, season, unitOfWork);
 
+        // En la última jornada regular el anuncio es el top 3 GENERAL de la quiniela (lo envía AnnounceMissingPodiumsAsync),
+        // no el podio semanal.
+        var scoredLeague = await unitOfWork.Leagues.GetAsync(season.LeagueId);
+        var isFinalRegularWeek = IsFinalRegularWeek(scoredLeague, week);
+
         foreach (var quiniela in quinielas)
         {
             // Ejecutar el motor de puntuación y galardones
@@ -588,7 +593,7 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
             {
                 _logger.LogInformation("[EspnLiveWorker] Quiniela {0}: Calificación completada con éxito.", quiniela.Name);
 
-                var podiumLine = await BuildPodiumLineAsync(bulletinApp, quiniela.Id, week.Id);
+                var podiumLine = isFinalRegularWeek ? null : await BuildPodiumLineAsync(bulletinApp, quiniela.Id, week.Id);
 
                 var payload = new PushNotificationPayload(
                     Title: $"🏆 ¡Jornada {week.WeekNumber} finalizada!",
@@ -645,9 +650,9 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         }
     }
 
-    private static PushNotificationLog BuildPodiumLog(Week week, int quinielaId, PushNotificationPayload payload, int delivered) => new()
+    private static PushNotificationLog BuildPodiumLog(Week week, int quinielaId, PushNotificationPayload payload, int delivered, string type = "WEEK_PODIUM") => new()
     {
-        NotificationType = "WEEK_PODIUM",
+        NotificationType = type,
         WeekId = week.Id,
         QuinielaId = quinielaId,
         UserId = null,
@@ -668,9 +673,10 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         IWebPushNotificationService webPush,
         IBulletinApplication? bulletinApp,
         DateTime nowUtc,
-        CancellationToken ct)
+        CancellationToken ct,
+        IScoringApplication? scoringApp = null)
     {
-        if (bulletinApp is null) return 0;
+        if (bulletinApp is null && scoringApp is null) return 0;
 
         var sent = 0;
         var seasons = (await unitOfWork.Seasons.GetAllAsync()).Where(s => s.Active).ToList();
@@ -685,8 +691,35 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
             foreach (var week in recentScored)
             {
                 var quinielas = await GetQuinielasForWeekAsync(week, season, unitOfWork);
+                var weekLeague = await unitOfWork.Leagues.GetAsync(season.LeagueId);
+                var isFinalRegularWeek = IsFinalRegularWeek(weekLeague, week);
+
                 foreach (var quiniela in quinielas)
                 {
+                    if (isFinalRegularWeek)
+                    {
+                        // Última jornada regular: se anuncia el top 3 GENERAL de la quiniela, no el podio semanal
+                        if (await unitOfWork.PushNotificationLogs.HasSeasonPodiumBeenSentAsync(week.Id, quiniela.Id, ct)) continue;
+
+                        var seasonLine = await BuildSeasonPodiumLineAsync(scoringApp, quiniela.Id, week.Id);
+                        if (seasonLine is null) continue;
+
+                        var seasonPayload = new PushNotificationPayload(
+                            Title: "🏆 ¡Tenemos campeones de la quiniela!",
+                            Message: $"Terminó la fase regular de {quiniela.Name} y el top 3 general quedó así: {seasonLine}. ¡Felicidades!",
+                            Url: "/standings",
+                            Data: new { type = "season_podium", weekId = week.Id, weekNumber = week.WeekNumber, quinielaId = quiniela.Id }
+                        );
+
+                        var seasonDelivered = await webPush.SendNotificationToQuinielaAsync(quiniela.Id, seasonPayload, ct);
+                        await unitOfWork.PushNotificationLogs.InsertAsync(BuildPodiumLog(week, quiniela.Id, seasonPayload, seasonDelivered, "SEASON_PODIUM"));
+                        await unitOfWork.Save(ct);
+
+                        _logger.LogInformation("[EspnLiveWorker] Top 3 general anunciado en Quiniela '{0}' ({1} entregados).", quiniela.Name, seasonDelivered);
+                        sent++;
+                        continue;
+                    }
+
                     if (await unitOfWork.PushNotificationLogs.HasWeekPodiumBeenSentAsync(week.Id, quiniela.Id, ct)) continue;
 
                     var podiumLine = await BuildPodiumLineAsync(bulletinApp, quiniela.Id, week.Id);
@@ -711,6 +744,43 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         }
 
         return sent;
+    }
+
+    internal static bool IsFinalRegularWeek(League? league, Week week) =>
+        league is not null && league.WeeksCount > 0 && week.WeekNumber == league.WeeksCount;
+
+    /// <summary>
+    /// Arma "🥇 A (66 aciertos) · 🥈 B · 🥉 C" con la tabla GENERAL de la quiniela al cierre de la jornada.
+    /// </summary>
+    internal async Task<string?> BuildSeasonPodiumLineAsync(IScoringApplication? scoringApp, int quinielaId, int weekId)
+    {
+        if (scoringApp is null) return null;
+
+        try
+        {
+            var response = await scoringApp.GetStandingsAsync(quinielaId, weekId);
+            var general = response?.Data?.GeneralStandings;
+            if (response is null || !response.isSuccess || general is null || general.Count == 0) return null;
+
+            var medals = new[] { "🥇", "🥈", "🥉" };
+            var parts = general
+                .Where(s => s.Hits > 0)
+                .OrderBy(s => s.Rank)
+                .Take(3)
+                .Select((s, i) =>
+                {
+                    var name = !string.IsNullOrWhiteSpace(s.DisplayName) ? s.DisplayName : s.Alias;
+                    return $"{medals[i]} {name} ({s.Hits} aciertos)";
+                })
+                .ToList();
+
+            return parts.Count == 0 ? null : string.Join(" · ", parts);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("[EspnLiveWorker] No se pudo armar el top 3 general (jornada {0}): {1}", weekId, ex.Message);
+            return null;
+        }
     }
 
     /// <summary>
