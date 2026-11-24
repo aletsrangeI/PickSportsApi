@@ -477,6 +477,35 @@ public class QuinielaReminderApplicationTests
             Times.Once);
     }
 
+    [Theory]
+    [InlineData(2026, 11, 24, 16, 0, true)]  // Martes 10:00 CST: el campo se sembró de madrugada y el aviso debe salir
+    [InlineData(2026, 11, 24, 15, 0, true)]  // Martes 09:00 CST: inicio de la ventana
+    [InlineData(2026, 11, 24, 14, 59, false)] // Martes 08:59 CST: antes de la ventana
+    [InlineData(2026, 11, 25, 3, 0, false)]  // Martes 21:00 CST: fin de la ventana (exclusivo)
+    public async Task ProcessDailyReminders_LiguillaSeededAnyDay_SendsAnnouncementOnlyInsideWindow(
+        int year, int month, int day, int hourUtc, int minuteUtc, bool shouldSend)
+    {
+        // ARRANGE: fase regular terminada y campo sembrado (fixture por defecto), pero NO es lunes
+        var nowUtc = new DateTime(year, month, day, hourUtc, minuteUtc, 0, DateTimeKind.Utc);
+        ArrangeFinishedRegularSeasonForLeague(FmfLiguillaFormatCode);
+        _mockLogs.Setup(l => l.HasLiguillaAnnouncementBeenSentAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        _mockWebPush.Setup(w => w.SendNotificationToQuinielaAsync(1, It.IsAny<PushNotificationPayload>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(5);
+
+        var service = CreateService();
+
+        // ACT
+        await service.ProcessDailyRemindersAsync(nowUtc);
+
+        // ASSERT
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            1,
+            It.Is<PushNotificationPayload>(p => p.Url == "/liguilla"),
+            It.IsAny<CancellationToken>()),
+            shouldSend ? Times.Once() : Times.Never());
+    }
+
     [Fact]
     public async Task ProcessDailyReminders_OnMondayAfterNoon_WhenRegularSeasonFinished_ShouldSendLiguillaAnnouncement()
     {
@@ -545,8 +574,8 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
             1,
             It.Is<PushNotificationPayload>(p =>
-                p.Title == "🏆 ¡Llegó la Liguilla: Pick'em ya disponible!" &&
-                p.Message == "¡Concluyó la fase regular! Ya puedes armar tu bracket en Pick'em Liguilla para Quiniela Amigos. ¡Haz tus pronósticos y gana la gloria!"),
+                p.Title == "🏆 ¡Arrancó la Liguilla! Arma tu Pick'em" &&
+                p.Message == "La fase regular terminó y ya están los equipos que pelean por el título. Ahora te toca a ti: en el Pick'em eliges quién avanza en cada llave hasta coronar al campeón de Quiniela Amigos. ¡Hazlo antes de que ruede el balón y demuestra que lo viste venir! ⚽"),
             It.IsAny<CancellationToken>()),
             Times.Once);
     }
