@@ -13,14 +13,15 @@ public class QuinielaReminderApplication : IQuinielaReminderApplication
 {
     // SPEC-027: formato de eliminatoria de la liga (League.KnockoutFormatCode)
 
-    private const string FmfLiguillaTitle = "🏆 ¡Llegó la Liguilla: Pick'em ya disponible!";
-    private const string FmfLiguillaMessageTemplate = "¡Concluyó la fase regular! Ya puedes armar tu bracket en Pick'em Liguilla para {0}. ¡Haz tus pronósticos y gana la gloria!";
+    // Los textos explican qué es el Pick'em: no todos los miembros lo conocen.
+    private const string FmfLiguillaTitle = "🏆 ¡Arrancó la Liguilla! Arma tu Pick'em";
+    private const string FmfLiguillaMessageTemplate = "La fase regular terminó y ya están los equipos que pelean por el título. Ahora te toca a ti: en el Pick'em eliges quién avanza en cada llave hasta coronar al campeón de {0}. ¡Hazlo antes de que ruede el balón y demuestra que lo viste venir! ⚽";
 
-    private const string PlayoffsTitle = "🏆 ¡Arrancan los Playoffs: Pick'em ya disponible!";
-    private const string PlayoffsMessageTemplate = "¡Concluyó la temporada regular! Ya puedes armar tu bracket de Playoffs en Pick'em para {0}. ¡Haz tus pronósticos y gana la gloria!";
+    private const string PlayoffsTitle = "🏆 ¡Arrancan los Playoffs! Arma tu Pick'em";
+    private const string PlayoffsMessageTemplate = "La temporada regular terminó y empieza lo bueno. En el Pick'em eliges quién avanza en cada ronda hasta coronar al campeón de {0}. ¡Arma tu bracket antes de que arranquen y demuestra que lo viste venir!";
 
-    private const string OctavosDeFinalTitle = "🏆 ¡Llegaron los Octavos de Final: Pick'em ya disponible!";
-    private const string OctavosDeFinalMessageTemplate = "¡Quedó definido el cuadro de la fase final! Ya puedes armar tu bracket de Octavos de Final en Pick'em para {0}. ¡Haz tus pronósticos y gana la gloria!";
+    private const string OctavosDeFinalTitle = "🏆 ¡Llegaron los Octavos de Final! Arma tu Pick'em";
+    private const string OctavosDeFinalMessageTemplate = "Quedó definido el cuadro de la fase final. En el Pick'em eliges quién avanza en cada cruce hasta coronar al campeón de {0}. ¡Arma tu bracket antes del primer silbatazo y demuestra que lo viste venir!";
 
     private static readonly TimeSpan LiguillaAnnouncementWindowStart = new(9, 0, 0);
     private static readonly TimeSpan LiguillaAnnouncementWindowEnd = new(21, 0, 0);

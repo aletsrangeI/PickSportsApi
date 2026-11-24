@@ -574,8 +574,8 @@ public class QuinielaReminderApplicationTests
         _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
             1,
             It.Is<PushNotificationPayload>(p =>
-                p.Title == "🏆 ¡Llegó la Liguilla: Pick'em ya disponible!" &&
-                p.Message == "¡Concluyó la fase regular! Ya puedes armar tu bracket en Pick'em Liguilla para Quiniela Amigos. ¡Haz tus pronósticos y gana la gloria!"),
+                p.Title == "🏆 ¡Arrancó la Liguilla! Arma tu Pick'em" &&
+                p.Message == "La fase regular terminó y ya están los equipos que pelean por el título. Ahora te toca a ti: en el Pick'em eliges quién avanza en cada llave hasta coronar al campeón de Quiniela Amigos. ¡Hazlo antes de que ruede el balón y demuestra que lo viste venir! ⚽"),
             It.IsAny<CancellationToken>()),
             Times.Once);
     }

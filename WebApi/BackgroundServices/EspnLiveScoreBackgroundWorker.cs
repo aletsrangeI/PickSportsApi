@@ -61,6 +61,15 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
 
                 hasActiveLiveMatches = await ProcessAutomationCycleAsync(unitOfWork, espnSync, webPush, scoringApp, stoppingToken, bulletinApp);
 
+                try
+                {
+                    await AnnounceMissingPodiumsAsync(unitOfWork, webPush, bulletinApp, DateTime.UtcNow, stoppingToken);
+                }
+                catch (Exception podiumEx) when (podiumEx is not OperationCanceledException)
+                {
+                    _logger.LogWarning("[EspnLiveWorker] Falló el anuncio de podios pendientes: {0}", podiumEx.Message);
+                }
+
                 await SyncKnockoutLeaguesAsync(scope.ServiceProvider, unitOfWork, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -590,7 +599,13 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
                     Data: new { type = "week_scored", weekId = week.Id, weekNumber = week.WeekNumber }
                 );
 
-                await webPush.SendNotificationToQuinielaAsync(quiniela.Id, payload, ct);
+                var deliveredScored = await webPush.SendNotificationToQuinielaAsync(quiniela.Id, payload, ct);
+
+                if (podiumLine is not null)
+                {
+                    // Evita que el barrido de podios repita el anuncio de esta jornada
+                    await unitOfWork.PushNotificationLogs.InsertAsync(BuildPodiumLog(week, quiniela.Id, payload, deliveredScored));
+                }
             }
             else
             {
@@ -628,6 +643,74 @@ public class EspnLiveScoreBackgroundWorker : BackgroundService
         {
             _logger.LogError("[EspnLiveWorker] Error al intentar auto-publicar la siguiente jornada: {0}", pubEx.Message);
         }
+    }
+
+    private static PushNotificationLog BuildPodiumLog(Week week, int quinielaId, PushNotificationPayload payload, int delivered) => new()
+    {
+        NotificationType = "WEEK_PODIUM",
+        WeekId = week.Id,
+        QuinielaId = quinielaId,
+        UserId = null,
+        DateLocal = DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+        Title = payload.Title,
+        Message = payload.Message,
+        DeliveredCount = delivered,
+        SentAtUtc = DateTime.UtcNow,
+        Active = true
+    };
+
+    /// <summary>
+    /// Anuncia el podio de las jornadas calificadas en las últimas 72 h cuyo push de finalización salió sin podio
+    /// (calificadas antes de existir esta función, o cuando el boletín no estaba listo). Idempotente por quiniela y jornada.
+    /// </summary>
+    public async Task<int> AnnounceMissingPodiumsAsync(
+        IUnitOfWork unitOfWork,
+        IWebPushNotificationService webPush,
+        IBulletinApplication? bulletinApp,
+        DateTime nowUtc,
+        CancellationToken ct)
+    {
+        if (bulletinApp is null) return 0;
+
+        var sent = 0;
+        var seasons = (await unitOfWork.Seasons.GetAllAsync()).Where(s => s.Active).ToList();
+
+        foreach (var season in seasons)
+        {
+            var recentScored = (await unitOfWork.Weeks.GetBySeasonIdAsync(season.Id))
+                .Where(w => w.Active && string.Equals(w.Status, "SCORED", StringComparison.OrdinalIgnoreCase)
+                            && w.ScoredAt.HasValue && w.ScoredAt.Value >= nowUtc.AddHours(-72))
+                .ToList();
+
+            foreach (var week in recentScored)
+            {
+                var quinielas = await GetQuinielasForWeekAsync(week, season, unitOfWork);
+                foreach (var quiniela in quinielas)
+                {
+                    if (await unitOfWork.PushNotificationLogs.HasWeekPodiumBeenSentAsync(week.Id, quiniela.Id, ct)) continue;
+
+                    var podiumLine = await BuildPodiumLineAsync(bulletinApp, quiniela.Id, week.Id);
+                    if (podiumLine is null) continue;
+
+                    var payload = new PushNotificationPayload(
+                        Title: $"🏅 ¡Así quedó el podio de la Jornada {week.WeekNumber}!",
+                        Message: $"{podiumLine}. Mira cómo quedó la tabla y la crónica de la jornada en {quiniela.Name}.",
+                        Url: "/standings",
+                        Data: new { type = "week_podium", weekId = week.Id, weekNumber = week.WeekNumber, quinielaId = quiniela.Id }
+                    );
+
+                    var delivered = await webPush.SendNotificationToQuinielaAsync(quiniela.Id, payload, ct);
+                    await unitOfWork.PushNotificationLogs.InsertAsync(BuildPodiumLog(week, quiniela.Id, payload, delivered));
+                    await unitOfWork.Save(ct);
+
+                    _logger.LogInformation("[EspnLiveWorker] Podio de la Jornada {0} anunciado en Quiniela '{1}' ({2} entregados).",
+                        week.WeekNumber, quiniela.Name, delivered);
+                    sent++;
+                }
+            }
+        }
+
+        return sent;
     }
 
     /// <summary>

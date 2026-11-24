@@ -22,6 +22,11 @@ public interface IPushNotificationLogRepository : IGenericRepository<PushNotific
         int quinielaId,
         CancellationToken ct = default);
 
+    Task<bool> HasWeekPodiumBeenSentAsync(
+        int weekId,
+        int quinielaId,
+        CancellationToken ct = default);
+
     Task<bool> HasLiguillaAnnouncementBeenSentAsync(
         int quinielaId,
         CancellationToken ct = default);

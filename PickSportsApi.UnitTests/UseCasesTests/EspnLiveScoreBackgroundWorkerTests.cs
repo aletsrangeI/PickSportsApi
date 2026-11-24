@@ -339,6 +339,86 @@ public class EspnLiveScoreBackgroundWorkerTests
             default), Times.Once);
     }
 
+    private Mock<IBulletinApplication> ArrangePodiumSweep(DateTime scoredAtUtc, bool alreadySent)
+    {
+        var season = new Season { Id = 1, LeagueId = 10, Active = true };
+        var week = new Week { Id = 100, SeasonId = 1, WeekNumber = 17, Status = "SCORED", ScoredAt = scoredAtUtc, Active = true };
+        var quiniela = new Quiniela { Id = 50, LeagueId = 10, OwnerId = 999, Active = true, Name = "Liga Master" };
+
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week> { week });
+        _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockPushNotificationLogs.Setup(l => l.HasWeekPodiumBeenSentAsync(100, 50, It.IsAny<CancellationToken>())).ReturnsAsync(alreadySent);
+
+        var bulletinApp = new Mock<IBulletinApplication>();
+        bulletinApp.Setup(b => b.GetBulletinAsync(50, 100)).ReturnsAsync(new Response<WeeklyBulletinDto>
+        {
+            isSuccess = true,
+            Data = new WeeklyBulletinDto
+            {
+                Podium = new List<PodiumMemberDto>
+                {
+                    new() { Position = 1, Alias = "Ana", Hits = 7 },
+                    new() { Position = 2, Alias = "Beto", Hits = 6 },
+                    new() { Position = 3, Alias = "Cris", Hits = 5 }
+                }
+            }
+        });
+        return bulletinApp;
+    }
+
+    [Fact]
+    public async Task AnnounceMissingPodiums_RecentScoredWeekWithoutLog_SendsPodiumOnceAndLogsIt()
+    {
+        // Arrange
+        var now = new DateTime(2026, 11, 24, 17, 0, 0, DateTimeKind.Utc);
+        var bulletinApp = ArrangePodiumSweep(now.AddHours(-38), alreadySent: false);
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        // Act
+        var sent = await worker.AnnounceMissingPodiumsAsync(_mockUow.Object, _mockWebPush.Object, bulletinApp.Object, now, default);
+
+        // Assert
+        Assert.Equal(1, sent);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            50,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("Jornada 17") && p.Message.Contains("🥇 Ana (7)") && p.Message.Contains("🥉 Cris (5)")),
+            default), Times.Once);
+        _mockPushNotificationLogs.Verify(l => l.InsertAsync(It.Is<PushNotificationLog>(x =>
+            x.NotificationType == "WEEK_PODIUM" && x.WeekId == 100 && x.QuinielaId == 50)), Times.Once);
+    }
+
+    [Fact]
+    public async Task AnnounceMissingPodiums_WhenAlreadySent_DoesNotSendAgain()
+    {
+        // Arrange
+        var now = new DateTime(2026, 11, 24, 17, 0, 0, DateTimeKind.Utc);
+        var bulletinApp = ArrangePodiumSweep(now.AddHours(-38), alreadySent: true);
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        // Act
+        var sent = await worker.AnnounceMissingPodiumsAsync(_mockUow.Object, _mockWebPush.Object, bulletinApp.Object, now, default);
+
+        // Assert
+        Assert.Equal(0, sent);
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(It.IsAny<int>(), It.IsAny<PushNotificationPayload>(), default), Times.Never);
+    }
+
+    [Fact]
+    public async Task AnnounceMissingPodiums_WeekScoredMoreThan72HoursAgo_IsIgnored()
+    {
+        // Arrange
+        var now = new DateTime(2026, 11, 24, 17, 0, 0, DateTimeKind.Utc);
+        var bulletinApp = ArrangePodiumSweep(now.AddHours(-80), alreadySent: false);
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        // Act
+        var sent = await worker.AnnounceMissingPodiumsAsync(_mockUow.Object, _mockWebPush.Object, bulletinApp.Object, now, default);
+
+        // Assert
+        Assert.Equal(0, sent);
+    }
+
     [Fact]
     public async Task ProcessAutomationCycle_WhenAllMatchesFinished_ShouldPublishNextWeekIfDraft()
     {
