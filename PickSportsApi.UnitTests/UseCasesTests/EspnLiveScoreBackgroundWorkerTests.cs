@@ -1,5 +1,6 @@
 using Common;
 using Domain.Entities;
+using DTO.Bulletin;
 using DTO.Notifications;
 using DTO.Scoring;
 using Interface.Persistence;
@@ -288,6 +289,53 @@ public class EspnLiveScoreBackgroundWorkerTests
         _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
             50,
             It.Is<PushNotificationPayload>(p => p.Title.Contains("finalizada")),
+            default), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessAutomationCycle_WhenWeekScored_PushIncludesTop3Podium()
+    {
+        // Arrange
+        var worker = new EspnLiveScoreBackgroundWorker(_mockScopeFactory.Object, _mockLogger.Object);
+
+        var season = new Season { Id = 1, LeagueId = 10, Active = true };
+        var week = new Week { Id = 100, SeasonId = 1, WeekNumber = 5, Status = "LOCKED", Active = true };
+        var quiniela = new Quiniela { Id = 50, LeagueId = 10, OwnerId = 999, Active = true, Name = "Liga Master" };
+        var match = new DbMatch { Id = 1, WeekId = 100, StatusState = "post", Active = true };
+
+        _mockSeasons.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<Season> { season });
+        _mockWeeks.Setup(w => w.GetBySeasonIdAsync(1)).ReturnsAsync(new List<Week> { week });
+        _mockMatches.Setup(m => m.GetByWeekIdAsync(100)).ReturnsAsync(new List<DbMatch> { match });
+        _mockQuinielas.Setup(q => q.GetByLeagueIdAsync(10)).ReturnsAsync(new List<Quiniela> { quiniela });
+        _mockScoringApp.Setup(s => s.ScoreWeekAsync(50, 100, 999))
+            .ReturnsAsync(new Response<ScoreWeekResultDto> { isSuccess = true });
+
+        var bulletinApp = new Mock<IBulletinApplication>();
+        bulletinApp.Setup(b => b.GetBulletinAsync(50, 100)).ReturnsAsync(new Response<WeeklyBulletinDto>
+        {
+            isSuccess = true,
+            Data = new WeeklyBulletinDto
+            {
+                Podium = new List<PodiumMemberDto>
+                {
+                    new() { Position = 1, Alias = "Ana", Hits = 7 },
+                    new() { Position = 2, Alias = "ana2", DisplayName = "Beto", Hits = 6 },
+                    new() { Position = 3, Alias = "Cris", Hits = 5 },
+                    new() { Position = 4, Alias = "Dora", Hits = 4 }
+                }
+            }
+        });
+
+        // Act
+        await worker.ProcessAutomationCycleAsync(
+            _mockUow.Object, _mockEspnSync.Object, _mockWebPush.Object, _mockScoringApp.Object, default, bulletinApp.Object);
+
+        // Assert
+        _mockWebPush.Verify(w => w.SendNotificationToQuinielaAsync(
+            50,
+            It.Is<PushNotificationPayload>(p => p.Title.Contains("finalizada")
+                && p.Message.Contains("🥇 Ana (7)") && p.Message.Contains("🥈 Beto (6)")
+                && p.Message.Contains("🥉 Cris (5)") && !p.Message.Contains("Dora")),
             default), Times.Once);
     }
 
